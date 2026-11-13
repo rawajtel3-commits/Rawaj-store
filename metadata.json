@@ -1,0 +1,6 @@
+{
+  "name": "متجر رواج | Rawaj Store",
+  "description": "منصة متجر رواج الإلكترونية الذكية - أحدث المنتجات والتقنيات مع مساعد الشراء والضمان المعتمد.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

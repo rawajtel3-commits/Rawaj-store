@@ -1,0 +1,277 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-50: #fcf5fd;
+  --color-brand-100: #f7e6fb;
+  --color-brand-200: #eeccf7;
+  --color-brand-300: #e0a3f0;
+  --color-brand-400: #cb6de5;
+  --color-brand-500: #af3fd2;
+  --color-brand-600: #9127b3;
+  --color-brand-700: #751a92;
+  --color-brand-800: #551465;
+  --color-brand-900: #461253;
+  --color-brand-950: #2a0733;
+}
+
+/* ==========================================================================
+   High-Contrast Light Mode (Accessibility & Preference)
+   ========================================================================== */
+html[data-theme="light"] {
+  --color-slate-950: #f1f5f9;
+  --color-slate-900: #ffffff;
+  --color-slate-800: #e2e8f0;
+  --color-slate-700: #cbd5e1;
+  --color-slate-600: #94a3b8;
+  --color-slate-500: #475569;
+  --color-slate-400: #334155;
+  --color-slate-300: #1e293b;
+  --color-slate-200: #0f172a;
+  --color-slate-100: #020617;
+  --color-slate-50: #020617;
+
+  /* Tinted dark surfaces become soft high-contrast pastels */
+  --color-brand-950: #fdf4ff;
+  --color-purple-950: #faf5ff;
+  --color-purple-900: #f3e8ff;
+  --color-emerald-950: #ecfdf5;
+  --color-amber-950: #fffbeb;
+  --color-rose-950: #fff1f2;
+  --color-indigo-950: #eef2ff;
+
+  /* Pastel text tokens become deep high-contrast inks (WCAG AA/AAA) */
+  --color-brand-100: #461253;
+  --color-brand-200: #551465;
+  --color-brand-300: #6b1d80;
+  --color-purple-100: #3b0764;
+  --color-purple-200: #4c1d95;
+  --color-purple-300: #5b21b6;
+  --color-amber-200: #78350f;
+  --color-amber-300: #92400e;
+  --color-emerald-200: #064e3b;
+  --color-emerald-300: #065f46;
+  --color-rose-200: #881337;
+  --color-rose-300: #9f1239;
+  --color-indigo-200: #312e81;
+  --color-indigo-300: #3730a3;
+  --color-teal-300: #115e59;
+}
+
+html[data-theme="light"] body {
+  background-color: #f1f5f9;
+  color: #0f172a;
+}
+
+/* Crisp high-contrast borders on cards, panels, and form controls */
+html[data-theme="light"] [class*="border-slate-800"] {
+  border-color: #cbd5e1;
+}
+
+html[data-theme="light"] [class*="border-slate-700"] {
+  border-color: #94a3b8;
+}
+
+/* High-contrast 400-level text colors without altering vivid bg-*-400 badges */
+html[data-theme="light"] .text-amber-400 {
+  color: #92400e;
+}
+html[data-theme="light"] .text-emerald-400 {
+  color: #047857;
+}
+html[data-theme="light"] .text-rose-400 {
+  color: #be123c;
+}
+html[data-theme="light"] .text-indigo-400 {
+  color: #4338ca;
+}
+html[data-theme="light"] .text-purple-400 {
+  color: #6d28d9;
+}
+html[data-theme="light"] .text-brand-400 {
+  color: #751a92;
+}
+html[data-theme="light"] .text-teal-400 {
+  color: #0f766e;
+}
+html[data-theme="light"] .text-blue-400 {
+  color: #1d4ed8;
+}
+html[data-theme="light"] .text-pink-400 {
+  color: #be185d;
+}
+html[data-theme="light"] .text-sky-400 {
+  color: #0369a1;
+}
+html[data-theme="light"] .text-cyan-400 {
+  color: #0e7490;
+}
+
+/* Keep star ratings golden while border/stroke stays crisp */
+html[data-theme="light"] svg.fill-amber-400 {
+  color: #d97706;
+  fill: #f59e0b;
+}
+
+/* Default text-white becomes high-contrast ink on light surfaces */
+html[data-theme="light"] .text-white,
+html[data-theme="light"] .hover\:text-white:hover {
+  color: #0f172a;
+}
+
+/* Preserve white text on vivid solid brand/status buttons & dark media surfaces */
+html[data-theme="light"] :is(
+  .bg-\[\#551465\],
+  .bg-\[\#551465\]\/95,
+  .hover\:bg-\[\#551465\]:hover,
+  .bg-brand-600,
+  .bg-brand-700,
+  .bg-emerald-600,
+  .bg-rose-600,
+  .bg-rose-500,
+  .bg-indigo-600,
+  .bg-amber-600,
+  .bg-purple-600,
+  .bg-red-600,
+  .from-rose-600,
+  .rawaj-promo-bar,
+  .rawaj-dark-surface
+) {
+  color: #ffffff;
+}
+
+html[data-theme="light"] :is(
+  .bg-\[\#551465\],
+  .bg-\[\#551465\]\/95,
+  .hover\:bg-\[\#551465\]:hover,
+  .bg-brand-600,
+  .bg-brand-700,
+  .bg-emerald-600,
+  .bg-rose-600,
+  .bg-rose-500,
+  .bg-indigo-600,
+  .bg-amber-600,
+  .bg-purple-600,
+  .bg-red-600,
+  .from-rose-600,
+  .rawaj-promo-bar,
+  .rawaj-dark-surface
+) .text-white {
+  color: #ffffff;
+}
+
+html[data-theme="light"] :is(
+  .bg-\[\#551465\],
+  .bg-\[\#551465\]\/95,
+  .bg-brand-600,
+  .bg-brand-700,
+  .bg-indigo-600,
+  .rawaj-dark-surface
+) > .text-brand-200,
+html[data-theme="light"] :is(
+  .bg-\[\#551465\],
+  .bg-\[\#551465\]\/95,
+  .bg-brand-600,
+  .bg-brand-700,
+  .bg-indigo-600,
+  .rawaj-dark-surface
+) > .text-brand-300,
+html[data-theme="light"] .rawaj-dark-surface .text-brand-300,
+html[data-theme="light"] .rawaj-dark-surface .text-slate-200,
+html[data-theme="light"] .rawaj-dark-surface .text-slate-400 {
+  color: #f3e8ff;
+}
+
+/* Keep promo bar dark purple gradient and crisp white/gold accents */
+html[data-theme="light"] .rawaj-promo-bar {
+  background-image: linear-gradient(to right, #551465, #461253, #2a0733);
+}
+html[data-theme="light"] .rawaj-promo-bar .text-brand-100,
+html[data-theme="light"] .rawaj-promo-bar .text-brand-300 {
+  color: #f3e8ff;
+}
+html[data-theme="light"] .rawaj-promo-bar select {
+  background-color: #ffffff;
+  color: #551465;
+  border-color: #cbd5e1;
+}
+
+/* Brand title gradient in Navbar */
+html[data-theme="light"] .rawaj-brand-title {
+  background-image: linear-gradient(to right, #0f172a, #551465, #751a92);
+}
+
+/* Video surface stays black in both themes */
+html[data-theme="light"] .rawaj-dark-surface {
+  background-color: #020617;
+  border-color: #1e293b;
+}
+
+/* Preserve dark ink on bright white/amber/emerald badges & buttons */
+html[data-theme="light"] .text-slate-900,
+html[data-theme="light"] .bg-white .text-slate-700,
+html[data-theme="light"] .bg-white\/90 .text-slate-700 {
+  color: #0f172a;
+}
+html[data-theme="light"] .text-slate-950 {
+  color: #020617;
+}
+
+/* Modal & Drawer backdrops stay cleanly dimmed */
+html[data-theme="light"] .fixed.inset-0[class*="bg-slate-950"] {
+  background-color: rgba(15, 23, 42, 0.55);
+}
+
+/* Product card hover overlay remains subtle dark veil */
+html[data-theme="light"] .group:hover .bg-slate-950\/40 {
+  background-color: rgba(15, 23, 42, 0.35);
+}
+
+/* Accessible high-contrast focus ring in light mode */
+html[data-theme="light"] :is(button, a, input, select, textarea):focus-visible {
+  outline: 2px solid #551465;
+  outline-offset: 2px;
+}
+
+/* Dynamic White-Label Primary Brand Color Override */
+html[data-whitelabel="active"] .bg-\[\#551465\] {
+  background-color: var(--color-brand-700);
+}
+html[data-whitelabel="active"] .border-\[\#551465\] {
+  border-color: var(--color-brand-700);
+}
+
+
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  /* Hide backdrop overlays and modal margins on print */
+  .fixed, nav, footer, header {
+    position: static !important;
+    background: none !important;
+  }
+
+  .printable-invoice-container {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 10px !important;
+    margin: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .printable-invoice-container * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}
