@@ -940,7 +940,7 @@ export const OrderTrackingPage: React.FC<OrderTrackingPageProps> = ({
                   <div className="flex items-center gap-2">
                     <QrCode className="w-8 h-8 text-brand-300 shrink-0" />
                     <div>
-                      <span className="font-bold text-white block">الفاتورة الضريبية ZATCA</span>
+                      <span className="font-bold text-white block">الفاتورة الضريبية الإلكترونية</span>
                       <span className="text-[10px] text-slate-400">شامل ضريبة القيمة المضافة {settings?.vatPercentage || 15}%</span>
                     </div>
                   </div>

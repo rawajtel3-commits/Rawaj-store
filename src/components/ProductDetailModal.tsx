@@ -27,7 +27,11 @@ import {
   Box,
   Bell,
   BellRing,
-  TrendingDown
+  TrendingDown,
+  Share2,
+  Check,
+  Copy,
+  MessageCircle
 } from 'lucide-react';
 import {
   Product,
@@ -165,8 +169,10 @@ const ProductDetailContent: React.FC<ProductDetailContentProps> = ({
   onAddReview,
 }) => {
   const modalBodyRef = useRef<HTMLDivElement | null>(null);
+  const shareTimerRef = useRef<number | null>(null);
   const [isReviewLightboxOpen, setIsReviewLightboxOpen] = useState(false);
   const [showTargetPriceForm, setShowTargetPriceForm] = useState(false);
+  const [shareStatus, setShareStatus] = useState<'idle' | 'shared' | 'copied' | 'fallback'>('idle');
   const [customTargetPrice, setCustomTargetPrice] = useState<string>(() =>
     String(Math.max(1, Math.round(product.price * 0.9)))
   );
@@ -236,6 +242,14 @@ const ProductDetailContent: React.FC<ProductDetailContentProps> = ({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [onClose, isARModalOpen, isReviewLightboxOpen]);
 
+  useEffect(() => {
+    return () => {
+      if (shareTimerRef.current) {
+        window.clearTimeout(shareTimerRef.current);
+      }
+    };
+  }, []);
+
   const basePrice = product.price + (selectedVariant?.priceOffset || 0);
   const warrantyPrice = selectedWarranty?.price || 0;
   const giftWrapPrice = isGiftWrapped ? 25 : 0;
@@ -301,6 +315,73 @@ const ProductDetailContent: React.FC<ProductDetailContentProps> = ({
     return currentTime >= ch.time ? idx : activeIdx;
   }, 0);
 
+  const getProductShareUrl = () => {
+    if (typeof window === 'undefined') return '';
+    const url = new URL(window.location.href);
+    url.searchParams.set('product', product.id);
+    return url.toString();
+  };
+
+  const formattedSharePrice = formatPrice(
+    finalUnitPrice,
+    settings?.activeCurrency,
+    settings?.yerExchangeRate
+  );
+  const shareUrl = getProductShareUrl();
+  const shareTitle = `${product.name} | متجر رواج`;
+  const shareText = `شاهد هذا المنتج في متجر رواج: ${product.name} (${formattedSharePrice})`;
+  const whatsappShareUrl = `https://wa.me/?text=${encodeURIComponent(`${shareText}\n${shareUrl}`)}`;
+
+  const scheduleShareStatusReset = (ms: number) => {
+    if (shareTimerRef.current) {
+      window.clearTimeout(shareTimerRef.current);
+    }
+    shareTimerRef.current = window.setTimeout(() => {
+      setShareStatus('idle');
+    }, ms);
+  };
+
+  const handleCopyShareLink = async () => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+      }
+      setShareStatus('copied');
+      scheduleShareStatusReset(3000);
+    } catch {
+      setShareStatus('fallback');
+    }
+  };
+
+  const handleShareProduct = async () => {
+    if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+      try {
+        await navigator.share({
+          title: shareTitle,
+          text: shareText,
+          url: shareUrl,
+        });
+        setShareStatus('shared');
+        scheduleShareStatusReset(3000);
+        return;
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          return;
+        }
+        // Fallback if Web Share API is blocked in embedded preview or unsupported
+      }
+    }
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+      }
+    } catch {
+      // Clipboard may be unavailable; fallback popover still exposes WhatsApp & selectable URL
+    }
+    setShareStatus((prev) => (prev === 'fallback' ? 'idle' : 'fallback'));
+  };
+
   const handleAddToCart = () => {
     onAddToCart({
       product,
@@ -325,14 +406,101 @@ const ProductDetailContent: React.FC<ProductDetailContentProps> = ({
         ref={modalBodyRef}
         className="bg-slate-900 border border-slate-800 rounded-3xl max-w-5xl w-full max-h-[92vh] overflow-y-auto shadow-2xl relative flex flex-col my-auto"
       >
-        {/* Header Close Button */}
-        <button
-          onClick={onClose}
-          aria-label="إغلاق نافذة التفاصيل"
-          className="absolute top-4 left-4 z-30 bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white p-2 rounded-full border border-slate-700 transition focus-visible:outline-2 focus-visible:outline-brand-400"
-        >
-          <X className="w-5 h-5" />
-        </button>
+        {/* Header Share & Close Buttons */}
+        <div className="absolute top-4 left-4 z-30 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleShareProduct}
+            aria-label="مشاركة المنتج"
+            className="bg-slate-800/90 hover:bg-[#551465] text-slate-200 hover:text-white px-3 py-2 rounded-full border border-slate-700 hover:border-brand-400/50 transition flex items-center gap-1.5 text-xs font-bold shadow focus-visible:outline-2 focus-visible:outline-brand-400"
+          >
+            {shareStatus === 'shared' || shareStatus === 'copied' ? (
+              <Check className="w-4 h-4 text-emerald-400" />
+            ) : (
+              <Share2 className="w-4 h-4 text-brand-300" />
+            )}
+            <span>
+              {shareStatus === 'shared'
+                ? 'تمت المشاركة'
+                : shareStatus === 'copied'
+                ? 'تم النسخ'
+                : 'مشاركة'}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="إغلاق نافذة التفاصيل"
+            className="bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white p-2 rounded-full border border-slate-700 transition focus-visible:outline-2 focus-visible:outline-brand-400"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Share Fallback & Confirmation Popover */}
+        {shareStatus !== 'idle' && (
+          <div className="absolute top-16 left-4 z-30 w-72 sm:w-80 bg-slate-950/95 backdrop-blur-md border border-slate-700 rounded-2xl p-3.5 shadow-2xl space-y-2.5 text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-bold text-white flex items-center gap-1.5">
+                {shareStatus === 'shared' || shareStatus === 'copied' ? (
+                  <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                ) : (
+                  <Share2 className="w-4 h-4 text-brand-300 shrink-0" />
+                )}
+                <span>
+                  {shareStatus === 'shared'
+                    ? 'تمت مشاركة المنتج بنجاح!'
+                    : shareStatus === 'copied'
+                    ? 'تم نسخ رابط المنتج إلى الحافظة!'
+                    : 'مشاركة رابط المنتج'}
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setShareStatus('idle')}
+                aria-label="إغلاق نافذة المشاركة"
+                className="text-slate-400 hover:text-white p-1 rounded-lg"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {shareStatus === 'fallback' && (
+              <>
+                <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-xl p-1.5">
+                  <input
+                    type="text"
+                    readOnly
+                    value={shareUrl}
+                    onClick={(e) => e.currentTarget.select()}
+                    aria-label="رابط المنتج للمشاركة"
+                    className="flex-1 bg-transparent text-[11px] font-mono text-slate-300 px-1.5 focus:outline-none truncate"
+                    dir="ltr"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleCopyShareLink}
+                    className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-[11px] font-bold flex items-center gap-1 shrink-0 transition"
+                  >
+                    <Copy className="w-3.5 h-3.5 text-brand-300" />
+                    <span>نسخ</span>
+                  </button>
+                </div>
+
+                <a
+                  href={whatsappShareUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center justify-center gap-2 transition shadow"
+                >
+                  <MessageCircle className="w-4 h-4" />
+                  <span>إرسال عبر واتساب</span>
+                </a>
+              </>
+            )}
+          </div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-6 sm:p-8">
           {/* Media Column (Images & Demonstration Video) */}
@@ -776,16 +944,37 @@ const ProductDetailContent: React.FC<ProductDetailContentProps> = ({
                 <button
                   type="button"
                   onClick={() => onToggleCompare(product.id)}
-                  className={`col-span-2 p-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 border transition ${
+                  className={`p-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 border transition ${
                     isCompared
                       ? 'bg-[#551465] text-white border-brand-400/50'
                       : 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800'
                   }`}
                 >
-                  <Scale className="w-4 h-4" />
-                  <span>{isCompared ? 'مضاف في جدول المقارنة (اضغط للإزالة)' : 'إضافة إلى مقارنة المنتجات'}</span>
+                  <Scale className="w-4 h-4 shrink-0" />
+                  <span className="truncate">{isCompared ? 'في المقارنة' : 'مقارنة المنتج'}</span>
                 </button>
               )}
+
+              <button
+                type="button"
+                onClick={handleShareProduct}
+                className={`${
+                  onToggleCompare ? '' : 'col-span-2'
+                } p-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 border bg-slate-950 hover:bg-[#551465]/25 text-slate-200 border-slate-800 hover:border-brand-400/50 transition`}
+              >
+                {shareStatus === 'shared' || shareStatus === 'copied' ? (
+                  <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                ) : (
+                  <Share2 className="w-4 h-4 text-brand-300 shrink-0" />
+                )}
+                <span>
+                  {shareStatus === 'shared'
+                    ? 'تمت المشاركة'
+                    : shareStatus === 'copied'
+                    ? 'تم نسخ الرابط'
+                    : 'مشاركة المنتج'}
+                </span>
+              </button>
             </div>
           </div>
 

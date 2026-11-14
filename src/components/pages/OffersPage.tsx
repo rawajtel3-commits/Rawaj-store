@@ -71,7 +71,7 @@ export const OffersPage: React.FC<OffersPageProps> = ({
       code: 'VIP20',
       discount: '20%',
       title: 'خصم الألعاب والساعات الذكية',
-      description: 'خصم خاص على إكسسوارات الجيمينج والساعات الأنيقة عند استخدام مدى',
+      description: 'خصم خاص على إكسسوارات الجيمينج والساعات الأنيقة عند الدفع الإلكتروني',
       badge: 'خصم مميز',
       color: 'from-purple-900 to-indigo-950',
     },

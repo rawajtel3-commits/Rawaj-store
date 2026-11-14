@@ -441,10 +441,10 @@ export const INITIAL_ORDERS: Order[] = [
     customer: {
       fullName: 'خالد بن عبدالعزيز التميمي',
       email: 'khaled.t@gmail.com',
-      phone: '+966 55 123 4567',
-      city: 'الرياض',
-      district: 'حي النخيل',
-      street: 'طريق الملك فهد، برج 14'
+      phone: '+967 77 123 4567',
+      city: 'المكلا (حضرموت)',
+      district: 'حي فوه',
+      street: 'شارع الستين، برج 14'
     },
     paymentMethod: 'card',
     paymentStatus: 'paid',
@@ -472,10 +472,10 @@ export const INITIAL_ORDERS: Order[] = [
     customer: {
       fullName: 'منى السليمان',
       email: 'mona.s@hotmail.com',
-      phone: '+966 50 987 6543',
-      city: 'جدة',
-      district: 'حي الشاطئ',
-      street: 'شارع الكورنيش'
+      phone: '+967 73 987 6543',
+      city: 'صنعاء',
+      district: 'حي حدة',
+      street: 'شارع حدة الرئيسي'
     },
     paymentMethod: 'apple_pay',
     paymentStatus: 'paid',
@@ -499,10 +499,10 @@ export const INITIAL_ORDERS: Order[] = [
     customer: {
       fullName: 'يوسف الهذلي',
       email: 'youssef.h@outlook.com',
-      phone: '+966 56 444 3322',
-      city: 'الخبر',
-      district: 'حي الحزام الذهبي',
-      street: 'شارع الامير تركي'
+      phone: '+967 71 444 3322',
+      city: 'عدن',
+      district: 'حي خور مكسر',
+      street: 'شارع الكورنيش'
     },
     paymentMethod: 'cod',
     paymentStatus: 'pending',
@@ -527,7 +527,7 @@ export const INITIAL_RETURN_REQUESTS: ReturnRequest[] = [
     quantity: 1,
     refundAmount: INITIAL_PRODUCTS[1].price,
     customerName: 'منى السليمان',
-    customerPhone: '+966 50 987 6543',
+    customerPhone: '+967 73 987 6543',
     reason: 'غير مطابق للمواصفات المطلوبة',
     resolution: 'exchange',
     condition: 'opened_unused',
@@ -552,8 +552,8 @@ export const INITIAL_FLASH_OFFER: FlashOfferConfig = {
 export const INITIAL_USER_PROFILE: UserProfile = {
   fullName: 'خالد بن عبدالعزيز التميمي',
   email: 'khaled.t@gmail.com',
-  phone: '+966 55 123 4567',
-  city: 'الرياض',
+  phone: '+967 77 123 4567',
+  city: 'المكلا (حضرموت)',
   joinedAt: '2026-01-15',
 };
 
@@ -629,6 +629,8 @@ export const INITIAL_STORE_SETTINGS: StoreSettings = {
   location: 'اليمن، حضرموت',
   adminPhone: '770600046 / 780080555',
   customerServicePhone: '733513128',
+  commercialRegistration: '',
+  vatNumber: '',
 };
 
 export const MASTER_PROMPT_TEXT = `### 🚀 البرومبت المعتمد لبناء وتصميم متجر إلكتروني متكامل مزود بمساعد ذكي (Master Prompt for E-Commerce App)
@@ -642,10 +644,10 @@ export const MASTER_PROMPT_TEXT = `### 🚀 البرومبت المعتمد لب
    - تقييمات ومراجعات مشفوعة بآراء العملاء الحقيقيين.
 
 2️⃣ خيارات الدفع الشاملة والآمنة (Multi-Payment Gateway Integration):
-   - دمج البطاقات الائتمانية والمدى (Mada, Visa, MasterCard) مع محاكي بطاقة تفاعلي والتحقق الفوري.
-   - خدمة الدفع عند الاستلام (COD).
-   - المحافظ الإلكترونية الحديثة (STC Pay, Apple Pay, Urpay).
-   - خيارات التقسيط بدون فوائد (تابي Tabby / تمارا Tamara).
+   - دمج البطاقات الائتمانية والدفع الإلكتروني (Visa, MasterCard, Apple Pay) مع محاكي بطاقة تفاعلي والتحقق الفوري.
+   - خدمة الدفع عند الاستلام (COD) في كافة محافظات الجمهورية اليمنية.
+   - المحافظ الإلكترونية المحلية والدولية (كريمي، جيب، فلوسي، قروش، كاش ون، Apple Pay).
+   - خيارات التقسيط بدون فوائد (تمارا / الدفع المرن على 4 دفعات).
    - إصدار فاتورة ضريبية مبسطة قابلة للطباعة والتنزيل فور إتمام الطلب.
 
 3️⃣ الدردشة المباشرة مع البائع (Live Seller Chat System):

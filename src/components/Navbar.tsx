@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { Category, StoreSettings, PageView, CurrencyCode, ThemeMode, InAppNotification, PriceDropAlert, Product } from '../types';
 import { NotificationCenterPopover } from './NotificationCenterPopover';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface NavbarProps {
   currentView: PageView;
@@ -284,6 +285,9 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span className="hidden lg:inline text-[11px]">نقطة</span>
           </button>
 
+          {/* In-App Android / PWA Install Button */}
+          <PWAInstallButton variant="navbar" />
+
           {/* Admin Dashboard */}
           <button
             onClick={onOpenAdmin}
@@ -326,6 +330,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               onClearNotifications={() => onClearNotifications && onClearNotifications()}
               onRemovePriceAlert={(pid) => onRemovePriceAlert && onRemovePriceAlert(pid)}
               onOpenProduct={onOpenProduct}
+              onOpenCart={onOpenCart}
             />
           )}
 

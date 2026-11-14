@@ -22,6 +22,7 @@ import {
   TrendingDown
 } from 'lucide-react';
 import { InAppNotification, Order, PageView, Product, ThemeMode } from '../types';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface MobileBottomNavProps {
   currentView: PageView;
@@ -119,11 +120,14 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
         <div
           role="dialog"
           aria-label="البحث السريع في المتجر"
-          className="fixed bottom-[68px] inset-x-3 z-50 bg-slate-900 border border-slate-700 rounded-3xl shadow-2xl p-4 space-y-3 animate-fade-in"
+          className="fixed bottom-[72px] inset-x-3 z-50 bg-slate-900 border border-[#551465]/60 rounded-3xl shadow-2xl p-4 pt-2.5 space-y-3 animate-fade-in"
         >
+          <div className="w-10 h-1 rounded-full bg-brand-400/60 mx-auto" />
           <div className="flex items-center justify-between">
-            <h3 className="text-xs font-extrabold text-white flex items-center gap-1.5">
-              <Search className="w-4 h-4 text-brand-300" />
+            <h3 className="text-xs font-extrabold text-white flex items-center gap-2">
+              <span className="w-7 h-7 rounded-xl bg-[#551465]/30 border border-brand-400/40 flex items-center justify-center text-brand-300">
+                <Search className="w-3.5 h-3.5" />
+              </span>
               <span>البحث السريع في متجر رواج</span>
             </h3>
             <button
@@ -211,8 +215,9 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
         <div
           role="dialog"
           aria-label="حسابي والطلبات"
-          className="fixed bottom-[68px] inset-x-3 z-50 bg-slate-900 border border-slate-700 rounded-3xl shadow-2xl p-4 space-y-3 animate-fade-in max-h-[75vh] overflow-y-auto"
+          className="fixed bottom-[72px] inset-x-3 z-50 bg-slate-900 border border-[#551465]/60 rounded-3xl shadow-2xl p-4 pt-2.5 space-y-3 animate-fade-in max-h-[75vh] overflow-y-auto"
         >
+          <div className="w-10 h-1 rounded-full bg-brand-400/60 mx-auto" />
           {/* Customer Profile Header */}
           <div className="flex items-center justify-between gap-3 border-b border-slate-800 pb-3">
             <div className="flex items-center gap-3 min-w-0">
@@ -278,23 +283,43 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
                   type="button"
                   onClick={() => {
                     if (onMarkNotificationRead) onMarkNotificationRead(latestNotification.id);
+                    if (
+                      latestNotification.type === 'checkout_reminder' ||
+                      latestNotification.actionType === 'open_cart'
+                    ) {
+                      setActiveSheet('none');
+                      onOpenCart();
+                      return;
+                    }
                     const matched = products.find((p) => p.id === latestNotification.productId);
                     if (matched && onOpenProduct) {
                       setActiveSheet('none');
                       onOpenProduct(matched);
                     }
                   }}
-                  className="w-full text-right bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded-xl p-2.5 flex items-start gap-2 transition"
+                  className="w-full text-right bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded-xl p-2.5 flex items-start justify-between gap-2 transition"
                 >
-                  <TrendingDown className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <div className="min-w-0">
-                    <span className="text-[11px] font-bold text-white block">
-                      {latestNotification.title}
-                    </span>
-                    <span className="text-[10px] text-slate-300 block leading-snug">
-                      {latestNotification.message}
-                    </span>
+                  <div className="flex items-start gap-2 min-w-0">
+                    {latestNotification.type === 'checkout_reminder' ? (
+                      <ShoppingBag className="w-4 h-4 text-amber-300 shrink-0 mt-0.5" />
+                    ) : (
+                      <TrendingDown className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                    )}
+                    <div className="min-w-0">
+                      <span className="text-[11px] font-bold text-white block">
+                        {latestNotification.title}
+                      </span>
+                      <span className="text-[10px] text-slate-300 block leading-snug">
+                        {latestNotification.message}
+                      </span>
+                    </div>
                   </div>
+                  {(latestNotification.type === 'checkout_reminder' ||
+                    latestNotification.actionType === 'open_cart') && (
+                    <span className="shrink-0 bg-[#551465] text-white text-[10px] font-extrabold px-2 py-1 rounded-lg">
+                      إكمال الطلب
+                    </span>
+                  )}
                 </button>
               ) : (
                 <p className="text-[11px] text-slate-400">
@@ -327,10 +352,12 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
             <button
               type="button"
               onClick={() => navigateAndClose('wishlist')}
-              className="min-h-[44px] bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-2xl p-2.5 flex items-center justify-between font-bold text-slate-200 transition"
+              className="min-h-[46px] bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-2xl p-2.5 flex items-center justify-between font-bold text-slate-200 transition"
             >
               <span className="flex items-center gap-2">
-                <Heart className="w-4 h-4 text-rose-400" />
+                <span className="w-7 h-7 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center shrink-0">
+                  <Heart className="w-3.5 h-3.5 text-rose-400" />
+                </span>
                 <span>المفضلة</span>
               </span>
               <span className="bg-slate-800 text-brand-300 px-2 py-0.5 rounded-lg text-[10px] tabular-nums">
@@ -344,10 +371,12 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
                 setActiveSheet('none');
                 onOpenCompare();
               }}
-              className="min-h-[44px] bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-2xl p-2.5 flex items-center justify-between font-bold text-slate-200 transition"
+              className="min-h-[46px] bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-2xl p-2.5 flex items-center justify-between font-bold text-slate-200 transition"
             >
               <span className="flex items-center gap-2">
-                <Scale className="w-4 h-4 text-brand-300" />
+                <span className="w-7 h-7 rounded-xl bg-[#551465]/25 border border-brand-400/30 flex items-center justify-center shrink-0">
+                  <Scale className="w-3.5 h-3.5 text-brand-300" />
+                </span>
                 <span>المقارنة</span>
               </span>
               <span className="bg-slate-800 text-brand-300 px-2 py-0.5 rounded-lg text-[10px] tabular-nums">
@@ -358,9 +387,11 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
             <button
               type="button"
               onClick={() => navigateAndClose('offers')}
-              className="min-h-[44px] bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-2xl p-2.5 flex items-center gap-2 font-bold text-slate-200 transition"
+              className="min-h-[46px] bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-2xl p-2.5 flex items-center gap-2 font-bold text-slate-200 transition"
             >
-              <Flame className="w-4 h-4 text-amber-400" />
+              <span className="w-7 h-7 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center shrink-0">
+                <Flame className="w-3.5 h-3.5 text-amber-400" />
+              </span>
               <span>العروض والخصومات</span>
             </button>
 
@@ -370,11 +401,15 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
                 setActiveSheet('none');
                 onOpenSellerChat();
               }}
-              className="min-h-[44px] bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-2xl p-2.5 flex items-center gap-2 font-bold text-slate-200 transition"
+              className="min-h-[46px] bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-2xl p-2.5 flex items-center gap-2 font-bold text-slate-200 transition"
             >
-              <MessageSquareText className="w-4 h-4 text-purple-400" />
+              <span className="w-7 h-7 rounded-xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-center shrink-0">
+                <MessageSquareText className="w-3.5 h-3.5 text-purple-400" />
+              </span>
               <span>دعم العملاء</span>
             </button>
+
+            <PWAInstallButton variant="sheet" onAfterAction={() => setActiveSheet('none')} />
 
             <button
               type="button"
@@ -433,95 +468,136 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
         </div>
       )}
 
-      {/* Persistent Mobile Bottom Navigation Bar */}
+      {/* Persistent Mobile Bottom Navigation Bar (Brand Colored with Enhanced Icons) */}
       <nav
         aria-label="التنقل السريع للجوال"
-        className="fixed bottom-0 inset-x-0 z-40 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 shadow-[0_-8px_30px_rgba(0,0,0,0.28)] pb-[env(safe-area-inset-bottom)]"
+        className="rawaj-bottom-nav fixed bottom-0 inset-x-0 z-40 border-t border-white/20 shadow-[0_-10px_32px_rgba(85,20,101,0.45)] pb-[env(safe-area-inset-bottom)]"
       >
-        <div className="grid grid-cols-4 h-16 max-w-md mx-auto">
+        <div className="grid grid-cols-4 h-[68px] max-w-md mx-auto px-2">
           {/* 1. Home */}
-          <button
-            type="button"
-            onClick={handleGoHome}
-            className={`flex flex-col items-center justify-center gap-1 text-[11px] font-bold transition relative ${
-              currentView === 'home' && activeSheet === 'none' && !isCartOpen
-                ? 'text-brand-300'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            {currentView === 'home' && activeSheet === 'none' && !isCartOpen && (
-              <span className="absolute top-0 w-8 h-1 rounded-b-full bg-[#551465]" />
-            )}
-            <Home className="w-5 h-5" />
-            <span>الرئيسية</span>
-          </button>
+          {(() => {
+            const isActive = currentView === 'home' && activeSheet === 'none' && !isCartOpen;
+            return (
+              <button
+                type="button"
+                onClick={handleGoHome}
+                className="flex flex-col items-center justify-center gap-0.5 text-[11px] font-bold transition-all duration-200 relative group"
+              >
+                {isActive && (
+                  <span className="absolute top-0 w-9 h-1 rounded-b-full bg-gradient-to-r from-amber-300 via-white to-amber-300 shadow-[0_2px_10px_rgba(255,255,255,0.65)]" />
+                )}
+                <span
+                  className={`w-10 h-8 rounded-2xl flex items-center justify-center transition-all duration-200 ${
+                    isActive
+                      ? 'rawaj-nav-icon-active scale-105'
+                      : 'rawaj-nav-icon-idle'
+                  }`}
+                >
+                  <Home className="w-[19px] h-[19px]" strokeWidth={isActive ? 2.4 : 2} />
+                </span>
+                <span className={isActive ? 'rawaj-nav-label-active font-extrabold' : 'rawaj-nav-label-idle'}>
+                  الرئيسية
+                </span>
+              </button>
+            );
+          })()}
 
           {/* 2. Search */}
-          <button
-            type="button"
-            onClick={handleToggleSearch}
-            aria-expanded={activeSheet === 'search'}
-            className={`flex flex-col items-center justify-center gap-1 text-[11px] font-bold transition relative ${
-              activeSheet === 'search' || Boolean(searchQuery)
-                ? 'text-brand-300'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            {activeSheet === 'search' && (
-              <span className="absolute top-0 w-8 h-1 rounded-b-full bg-[#551465]" />
-            )}
-            <Search className="w-5 h-5" />
-            <span>بحث</span>
-          </button>
+          {(() => {
+            const isActive = activeSheet === 'search' || Boolean(searchQuery);
+            return (
+              <button
+                type="button"
+                onClick={handleToggleSearch}
+                aria-expanded={activeSheet === 'search'}
+                className="flex flex-col items-center justify-center gap-0.5 text-[11px] font-bold transition-all duration-200 relative group"
+              >
+                {activeSheet === 'search' && (
+                  <span className="absolute top-0 w-9 h-1 rounded-b-full bg-gradient-to-r from-amber-300 via-white to-amber-300 shadow-[0_2px_10px_rgba(255,255,255,0.65)]" />
+                )}
+                <span
+                  className={`w-10 h-8 rounded-2xl flex items-center justify-center transition-all duration-200 ${
+                    isActive
+                      ? 'rawaj-nav-icon-active scale-105'
+                      : 'rawaj-nav-icon-idle'
+                  }`}
+                >
+                  <Search className="w-[19px] h-[19px]" strokeWidth={isActive ? 2.4 : 2} />
+                </span>
+                <span className={isActive ? 'rawaj-nav-label-active font-extrabold' : 'rawaj-nav-label-idle'}>
+                  بحث
+                </span>
+              </button>
+            );
+          })()}
 
           {/* 3. Cart */}
           <button
             type="button"
             onClick={handleOpenCart}
-            className={`flex flex-col items-center justify-center gap-1 text-[11px] font-bold transition relative ${
-              isCartOpen ? 'text-brand-300' : 'text-slate-400 hover:text-white'
-            }`}
+            className="flex flex-col items-center justify-center gap-0.5 text-[11px] font-bold transition-all duration-200 relative group"
           >
             {isCartOpen && (
-              <span className="absolute top-0 w-8 h-1 rounded-b-full bg-[#551465]" />
+              <span className="absolute top-0 w-9 h-1 rounded-b-full bg-gradient-to-r from-amber-300 via-white to-amber-300 shadow-[0_2px_10px_rgba(255,255,255,0.65)]" />
             )}
-            <div className="relative">
-              <ShoppingBag className="w-5 h-5" />
+            <span
+              className={`relative w-10 h-8 rounded-2xl flex items-center justify-center transition-all duration-200 ${
+                isCartOpen
+                  ? 'rawaj-nav-icon-active scale-105'
+                  : 'rawaj-nav-icon-idle'
+              }`}
+            >
+              <ShoppingBag className="w-[19px] h-[19px]" strokeWidth={isCartOpen ? 2.4 : 2} />
               {cartCount > 0 && (
-                <span className="absolute -top-1.5 -right-2.5 bg-[#551465] text-white text-[10px] font-extrabold min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center border border-brand-300/40 tabular-nums shadow">
+                <span className="rawaj-nav-badge absolute -top-1 -right-1.5 text-[10px] font-black min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center tabular-nums shadow">
                   {cartCount}
                 </span>
               )}
-            </div>
-            <span>السلة</span>
+            </span>
+            <span className={isCartOpen ? 'rawaj-nav-label-active font-extrabold' : 'rawaj-nav-label-idle'}>
+              السلة
+            </span>
           </button>
 
           {/* 4. User Profile / Orders */}
-          <button
-            type="button"
-            onClick={handleToggleAccount}
-            aria-expanded={activeSheet === 'account'}
-            className={`flex flex-col items-center justify-center gap-1 text-[11px] font-bold transition relative ${
-              activeSheet === 'account' || currentView === 'profile' || currentView === 'track-order' || currentView === 'wishlist'
-                ? 'text-brand-300'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            {(activeSheet === 'account' || currentView === 'profile' || currentView === 'track-order' || currentView === 'wishlist') && (
-              <span className="absolute top-0 w-8 h-1 rounded-b-full bg-[#551465]" />
-            )}
-            <div className="relative">
-              <User className="w-5 h-5" />
-              {(unreadNotifications.length > 0 || orders.length > 0 || wishlistCount > 0) && (
+          {(() => {
+            const isActive =
+              activeSheet === 'account' ||
+              currentView === 'profile' ||
+              currentView === 'track-order' ||
+              currentView === 'wishlist';
+            return (
+              <button
+                type="button"
+                onClick={handleToggleAccount}
+                aria-expanded={activeSheet === 'account'}
+                className="flex flex-col items-center justify-center gap-0.5 text-[11px] font-bold transition-all duration-200 relative group"
+              >
+                {isActive && (
+                  <span className="absolute top-0 w-9 h-1 rounded-b-full bg-gradient-to-r from-amber-300 via-white to-amber-300 shadow-[0_2px_10px_rgba(255,255,255,0.65)]" />
+                )}
                 <span
-                  className={`absolute -top-1 -right-1.5 w-2.5 h-2.5 rounded-full border border-slate-900 ${
-                    unreadNotifications.length > 0 ? 'bg-emerald-400' : 'bg-amber-400'
+                  className={`relative w-10 h-8 rounded-2xl flex items-center justify-center transition-all duration-200 ${
+                    isActive
+                      ? 'rawaj-nav-icon-active scale-105'
+                      : 'rawaj-nav-icon-idle'
                   }`}
-                />
-              )}
-            </div>
-            <span>حسابي</span>
-          </button>
+                >
+                  <User className="w-[19px] h-[19px]" strokeWidth={isActive ? 2.4 : 2} />
+                  {(unreadNotifications.length > 0 || orders.length > 0 || wishlistCount > 0) && (
+                    <span
+                      className={`absolute top-0.5 right-1 w-2.5 h-2.5 rounded-full ring-2 ring-[#461253] ${
+                        unreadNotifications.length > 0 ? 'bg-emerald-400' : 'bg-amber-400'
+                      }`}
+                    />
+                  )}
+                </span>
+                <span className={isActive ? 'rawaj-nav-label-active font-extrabold' : 'rawaj-nav-label-idle'}>
+                  حسابي
+                </span>
+              </button>
+            );
+          })()}
         </div>
       </nav>
     </div>

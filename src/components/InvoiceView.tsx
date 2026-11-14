@@ -34,9 +34,9 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({
   const getPaymentMethodLabel = (method: string) => {
     switch (method) {
       case 'card':
-        return 'بطاقة مدى / ائتمان (Visa / Mastercard)';
+        return 'بطاقة ائتمانية (Visa / Mastercard)';
       case 'stc_pay':
-        return 'محفظة STC Pay / Apple Pay';
+        return 'محفظة إلكترونية (كريمي / جيب / فلوسي / قروش / كاش ون)';
       case 'tamara':
         return 'تقسيط تمارا (4 دفعات)';
       case 'cod':
@@ -121,9 +121,9 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({
               </p>
 
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-400 print:text-slate-600 pt-1 font-mono">
-                <span>السجل التجاري (CR): <strong className="text-slate-200 print:text-slate-900">1010889221</strong></span>
+                <span>السجل التجاري (CR): <strong className="text-slate-200 print:text-slate-900">{settings.commercialRegistration?.trim() || ''}</strong></span>
                 <span>•</span>
-                <span>الرقم الضريبي (VAT): <strong className="text-slate-200 print:text-slate-900">310992837400003</strong></span>
+                <span>الرقم الضريبي (VAT): <strong className="text-slate-200 print:text-slate-900">{settings.vatNumber?.trim() || ''}</strong></span>
               </div>
 
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-400 print:text-slate-600 font-mono">
@@ -139,7 +139,7 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({
           {/* Invoice Document Title & Order Metadata Box */}
           <div className="bg-slate-900/90 print:bg-slate-50 p-4 rounded-2xl border border-slate-800 print:border-slate-300 text-left sm:text-right shrink-0 min-w-[200px] space-y-1.5">
             <div className="inline-block bg-[#551465]/30 print:bg-slate-200 text-brand-300 print:text-slate-900 text-[11px] font-bold px-3 py-1 rounded-lg border border-[#551465]/50 print:border-slate-400 mb-1">
-              فاتورة ضريبية مبسطة (ZATCA Tax Invoice)
+              فاتورة ضريبية إلكترونية مبسطة
             </div>
 
             <div className="space-y-1 font-mono text-xs">
@@ -322,10 +322,10 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({
             </div>
             <div className="space-y-0.5 text-right">
               <span className="font-extrabold text-white print:text-slate-900 text-xs block">
-                رمز التحقق الضريبي ZATCA QR
+                رمز التحقق الضريبي الإلكتروني QR
               </span>
               <span className="text-[10px] text-slate-400 print:text-slate-600 block leading-tight">
-                فاتورة موثقة رقمياً ومسجلة رسمياً لدى هيئة الزكاة والضريبة والجمارك.
+                فاتورة موثقة رقمياً وصادرة رسمياً من متجر رواج في الجمهورية اليمنية.
               </span>
             </div>
           </div>

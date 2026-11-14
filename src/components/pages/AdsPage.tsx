@@ -168,7 +168,7 @@ export const AdsPage: React.FC<AdsPageProps> = ({
           </h1>
 
           <p className="text-slate-300 text-xs sm:text-base leading-relaxed">
-            احصل على مساحات إعلانية ممتازة وترشيحات ذكية حصرية في متجر رواج، وضاعف مبيعاتك مع أعلى معدلات تحويل في المملكة.
+            احصل على مساحات إعلانية ممتازة وترشيحات ذكية حصرية في متجر رواج، وضاعف مبيعاتك مع أعلى معدلات تحويل في الجمهورية اليمنية.
           </p>
 
           <div className="pt-2 sm:pt-4 flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center justify-center sm:justify-start gap-3 sm:gap-4">
@@ -603,7 +603,7 @@ export const AdsPage: React.FC<AdsPageProps> = ({
               <span>معايير القبول والجودة</span>
             </h4>
             <p className="leading-relaxed">
-              تخضع جميع المنتجات والإعلانات للمراجعة لضمان مطابقتها للمواصفات السعودية وتوفر الضمان وتجربة مستخدم ممتازة.
+              تخضع جميع المنتجات والإعلانات للمراجعة لضمان مطابقتها للمواصفات المعتمدة في الجمهورية اليمنية وتوفر الضمان وتجربة مستخدم ممتازة.
             </p>
           </div>
 

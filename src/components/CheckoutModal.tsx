@@ -17,7 +17,8 @@ import {
   Lock,
   ArrowRight,
   Coins,
-  AlertCircle
+  AlertCircle,
+  BellRing
 } from 'lucide-react';
 import { CartItem, CustomerInfo, PaymentMethodId, Order, StoreSettings, UserProfile } from '../types';
 import {
@@ -27,6 +28,18 @@ import {
   pointsToDiscountSar,
 } from '../utils/loyalty';
 import { formatPrice } from '../utils/currency';
+import {
+  getPushPermissionStatus,
+  PushPermissionStatus,
+  requestPushPermissionSafely,
+} from '../utils/checkoutReminder';
+
+interface CheckoutReminderSnapshot {
+  itemsCount: number;
+  total: number;
+  firstItemName: string;
+  firstItemImage?: string;
+}
 
 interface CheckoutModalProps {
   isOpen: boolean;
@@ -37,6 +50,8 @@ interface CheckoutModalProps {
   initialLoyaltyPointsToRedeem?: number;
   userProfile?: UserProfile;
   onOrderCompleted: (newOrder: Order) => void;
+  onScheduleCheckoutReminder?: (delayMs: number, snapshot: CheckoutReminderSnapshot) => void;
+  onCancelCheckoutReminder?: () => void;
   settings: StoreSettings;
 }
 
@@ -49,6 +64,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   initialLoyaltyPointsToRedeem = 0,
   userProfile,
   onOrderCompleted,
+  onScheduleCheckoutReminder,
+  onCancelCheckoutReminder,
   settings,
 }) => {
   const [step, setStep] = useState<'info' | 'payment' | 'confirmation'>('info');
@@ -78,16 +95,26 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [cardCvc, setCardCvc] = useState('');
 
   // Mobile Wallet State
+  const [selectedWallet, setSelectedWallet] = useState<'كريمي' | 'جيب' | 'فلوسي' | 'قروش' | 'كاش ون'>('كريمي');
   const [stcPhone, setStcPhone] = useState('');
 
   // Completed Order State for Confirmation Invoice
   const [createdOrder, setCreatedOrder] = useState<Order | null>(null);
+
+  // Abandoned Checkout Push Reminder State
+  const [enablePushReminder, setEnablePushReminder] = useState<boolean>(true);
+  const [reminderDelaySec, setReminderDelaySec] = useState<5 | 15 | 60>(5);
+  const [pushPermission, setPushPermission] = useState<PushPermissionStatus>(() =>
+    getPushPermissionStatus()
+  );
 
   useEffect(() => {
     if (isOpen) {
       setStep('info');
       setPaymentError('');
       setRedeemPoints(initialLoyaltyPointsToRedeem);
+      setPushPermission(getPushPermissionStatus());
+      onCancelCheckoutReminder?.();
       if (userProfile) {
         setCustomer((prev) => ({
           ...prev,
@@ -99,6 +126,60 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       }
     }
   }, [isOpen, initialLoyaltyPointsToRedeem, userProfile]);
+
+  const totalItemsCount = items.reduce((sum, item) => sum + item.quantity, 0);
+
+  // Schedule reminder if user switches away from app/tab while in checkout
+  useEffect(() => {
+    if (!isOpen || step === 'confirmation' || !enablePushReminder || items.length === 0) {
+      return;
+    }
+
+    const subtotalEstimate = items.reduce((sum, item) => {
+      const variantOffset = item.selectedVariant?.priceOffset || 0;
+      const warrantyPrice = item.selectedWarranty?.price || 0;
+      const giftWrapPrice = item.isGiftWrapped ? 25 : 0;
+      return sum + (item.product.price + variantOffset + warrantyPrice + giftWrapPrice) * item.quantity;
+    }, 0);
+    const afterCoupon = Math.max(0, subtotalEstimate - discountAmount);
+    const maxPts = Math.min(Math.floor(loyaltyPoints / 10) * 10, discountSarToPoints(afterCoupon));
+    const usedPts = redeemPoints >= MIN_REDEEM_POINTS ? Math.min(redeemPoints, maxPts) : 0;
+    const loyaltyDisc = Math.min(afterCoupon, pointsToDiscountSar(usedPts));
+    const netEst = Math.max(0, afterCoupon - loyaltyDisc);
+    const vatEst = Math.round(netEst * (settings.vatPercentage / 100) * 100) / 100;
+    const shipEst = netEst >= settings.freeShippingThreshold ? 0 : 25;
+    const fullEstimatedTotal = netEst + vatEst + shipEst;
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        onScheduleCheckoutReminder?.(reminderDelaySec * 1000, {
+          itemsCount: totalItemsCount,
+          total: fullEstimatedTotal,
+          firstItemName: items[0].product.name,
+          firstItemImage: items[0].product.images[0],
+        });
+      } else if (document.visibilityState === 'visible') {
+        onCancelCheckoutReminder?.();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [
+    isOpen,
+    step,
+    enablePushReminder,
+    reminderDelaySec,
+    items,
+    totalItemsCount,
+    discountAmount,
+    loyaltyPoints,
+    redeemPoints,
+    settings.vatPercentage,
+    settings.freeShippingThreshold,
+  ]);
 
   if (!isOpen) return null;
 
@@ -129,9 +210,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const total = netSubtotal + vatAmount + shippingFee;
   const earnedPoints = calculateEarnedPoints(netSubtotal);
 
-  const ksaCities = [
-    'المكلا (حضرموت)', 'الرياض', 'جدة', 'الدمام', 'مكة المكرمة', 'المدينة المنورة', 
-    'الخبر', 'أبها', 'تبوك', 'القصيم', 'دبي (الإمارات)', 'الكويت (الكويت)'
+  const yemenCities = [
+    'المكلا (حضرموت)', 'صنعاء', 'عدن', 'تعز', 'سيئون (حضرموت)',
+    'إب', 'الحديدة', 'مأرب', 'ذمار', 'المهرة', 'شبوة', 'لحج'
   ];
 
   const validateInfoStep = () => {
@@ -152,6 +233,106 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     }
   };
 
+  const handleTogglePushReminder = async () => {
+    const next = !enablePushReminder;
+    setEnablePushReminder(next);
+    if (next) {
+      const status = await requestPushPermissionSafely();
+      setPushPermission(status);
+    }
+  };
+
+  const handleRequestPushPermission = async () => {
+    const status = await requestPushPermissionSafely();
+    setPushPermission(status);
+  };
+
+  const handleCloseWithReminder = () => {
+    if (step !== 'confirmation' && enablePushReminder && items.length > 0) {
+      onScheduleCheckoutReminder?.(reminderDelaySec * 1000, {
+        itemsCount: totalItemsCount,
+        total,
+        firstItemName: items[0].product.name,
+        firstItemImage: items[0].product.images[0],
+      });
+    }
+    onClose();
+  };
+
+  const renderPushReminderPanel = () => (
+    <div className="bg-slate-950 border border-[#551465]/40 rounded-2xl p-3.5 sm:p-4 space-y-2.5 text-xs">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start gap-2.5">
+          <div className="w-8 h-8 rounded-xl bg-[#551465]/25 border border-brand-400/30 flex items-center justify-center shrink-0 mt-0.5">
+            <BellRing className={`w-4 h-4 ${enablePushReminder ? 'text-amber-300' : 'text-slate-500'}`} />
+          </div>
+          <div className="space-y-0.5">
+            <span className="font-extrabold text-white block">
+              تذكير إتمام الدفع عبر إشعار دفع
+            </span>
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              في حال لم تكمل الدفع الآن، سنرسل لك إشعار تذكير يحتوي على زر <strong className="text-brand-300">«إكمال الطلب»</strong> للعودة مباشرة إلى سلة المشتريات.
+            </p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          role="switch"
+          aria-checked={enablePushReminder}
+          onClick={handleTogglePushReminder}
+          className={`px-3 py-1.5 rounded-xl font-extrabold text-[11px] border transition shrink-0 ${
+            enablePushReminder
+              ? 'bg-[#551465] text-white border-brand-400/50 shadow'
+              : 'bg-slate-900 text-slate-400 border-slate-700 hover:text-white'
+          }`}
+        >
+          {enablePushReminder ? 'مفعّل' : 'معطّل'}
+        </button>
+      </div>
+
+      {enablePushReminder && (
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/80 text-[11px]">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-slate-400">إرسال التذكير بعد:</span>
+            {([
+              { sec: 5, label: '5 ثوانٍ' },
+              { sec: 15, label: '15 ثانية' },
+              { sec: 60, label: 'دقيقة واحدة' },
+            ] as const).map((opt) => (
+              <button
+                key={opt.sec}
+                type="button"
+                onClick={() => setReminderDelaySec(opt.sec)}
+                className={`px-2.5 py-1 rounded-lg font-bold border transition ${
+                  reminderDelaySec === opt.sec
+                    ? 'bg-[#551465] text-white border-brand-400/50'
+                    : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-700'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+
+          {pushPermission === 'default' ? (
+            <button
+              type="button"
+              onClick={handleRequestPushPermission}
+              className="text-amber-300 hover:text-amber-200 font-bold underline underline-offset-4"
+            >
+              السماح بإشعارات الدفع للنظام
+            </button>
+          ) : pushPermission === 'granted' ? (
+            <span className="text-emerald-400 font-bold">✓ إشعار دفع المتصفح + داخل التطبيق</span>
+          ) : (
+            <span className="text-slate-400">✓ تنبيه فوري داخل التطبيق</span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
   const handleFinalizePayment = () => {
     setPaymentError('');
     // Validate card if card payment selected
@@ -162,7 +343,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       }
     } else if (selectedPayment === 'stc_pay') {
       if (!stcPhone || stcPhone.length < 9) {
-        setPaymentError('الرجاء إدخال رقم جوال مسجل في محفظة STC Pay.');
+        setPaymentError('الرجاء إدخال رقم جوال مسجل في المحفظة الإلكترونية.');
         return;
       }
     }
@@ -186,6 +367,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       status: 'processing',
     };
 
+    onCancelCheckoutReminder?.();
     setCreatedOrder(newOrder);
     onOrderCompleted(newOrder);
     setStep('confirmation');
@@ -205,8 +387,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           </div>
 
           <button
-            onClick={onClose}
+            onClick={handleCloseWithReminder}
             className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition"
+            aria-label="إغلاق نافذة الدفع"
           >
             <X className="w-5 h-5" />
           </button>
@@ -277,7 +460,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                     type="tel"
                     value={customer.phone}
                     onChange={(e) => setCustomer({ ...customer, phone: e.target.value })}
-                    placeholder="05X XXX XXXX"
+                    placeholder="+967 7X XXX XXXX"
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl pr-9 pl-3 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:border-[#551465]"
                   />
                   <Phone className="w-4 h-4 text-slate-500 absolute right-3 top-3" />
@@ -286,13 +469,13 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               </div>
 
               <div>
-                <label className="block text-slate-300 font-medium mb-1">المدينة *</label>
+                <label className="block text-slate-300 font-medium mb-1">المدينة / المحافظة *</label>
                 <select
                   value={customer.city}
                   onChange={(e) => setCustomer({ ...customer, city: e.target.value })}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-white focus:outline-none focus:border-[#551465]"
                 >
-                  {ksaCities.map((city) => (
+                  {yemenCities.map((city) => (
                     <option key={city} value={city}>{city}</option>
                   ))}
                 </select>
@@ -305,7 +488,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                     type="text"
                     value={customer.district}
                     onChange={(e) => setCustomer({ ...customer, district: e.target.value })}
-                    placeholder="مثال: حي الياسمين"
+                    placeholder="مثال: حي فوه / حي حدة"
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl pr-9 pl-3 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:border-[#551465]"
                   />
                   <MapPin className="w-4 h-4 text-slate-500 absolute right-3 top-3" />
@@ -319,7 +502,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                   type="text"
                   value={customer.street}
                   onChange={(e) => setCustomer({ ...customer, street: e.target.value })}
-                  placeholder="مثال: شارع أنس بن مالك، عمارة 40"
+                  placeholder="مثال: شارع الستين، عمارة 40"
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:border-[#551465]"
                 />
                 {formErrors.street && <span className="text-rose-400 text-[10px] mt-1 block">{formErrors.street}</span>}
@@ -336,6 +519,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#551465]"
               />
             </div>
+
+            {renderPushReminderPanel()}
 
             <div className="pt-4 border-t border-slate-800 flex items-center justify-between">
               <div className="text-xs">
@@ -372,12 +557,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               >
                 <CreditCard className="w-6 h-6 text-brand-300 mb-2" />
                 <div>
-                  <span className="font-bold text-xs text-white block">مدى / الفيزا</span>
+                  <span className="font-bold text-xs text-white block">فيزا / ماستركارد</span>
                   <span className="text-[10px] text-slate-400">بطاقة ائتمان مباشرة</span>
                 </div>
               </button>
 
-              {/* Option 2: Apple Pay / STC Pay */}
+              {/* Option 2: Local & Digital Wallets */}
               <button
                 onClick={() => setSelectedPayment('stc_pay')}
                 className={`p-3 rounded-2xl border text-right flex flex-col justify-between transition ${
@@ -388,12 +573,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               >
                 <Wallet className="w-6 h-6 text-purple-400 mb-2" />
                 <div>
-                  <span className="font-bold text-xs text-white block">المحافظ الرقمية</span>
-                  <span className="text-[10px] text-slate-400">STC Pay / Apple Pay</span>
+                  <span className="font-bold text-xs text-white block">المحافظ الإلكترونية</span>
+                  <span className="text-[10px] text-slate-400">كريمي / جيب / فلوسي / قروش / كاش ون</span>
                 </div>
               </button>
 
-              {/* Option 3: Installments (Tabby / Tamara) */}
+              {/* Option 3: Installments */}
               <button
                 onClick={() => setSelectedPayment('tamara')}
                 className={`p-3 rounded-2xl border text-right flex flex-col justify-between transition ${
@@ -404,7 +589,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               >
                 <Clock className="w-6 h-6 text-amber-400 mb-2" />
                 <div>
-                  <span className="font-bold text-xs text-white block">التقسيط (تمارا / تابي)</span>
+                  <span className="font-bold text-xs text-white block">الدفع المرن (تقسيط)</span>
                   <span className="text-[10px] text-slate-400">قسمها على 4 دفعات</span>
                 </div>
               </button>
@@ -430,9 +615,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             {selectedPayment === 'card' && (
               <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3 text-xs">
                 <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                  <span className="font-bold text-slate-200">بيانات بطاقة الدفع (مدى / فيزا / ماستر كارد):</span>
+                  <span className="font-bold text-slate-200">بيانات بطاقة الدفع (فيزا / ماستر كارد / Apple Pay):</span>
                   <div className="flex gap-2 text-[10px] font-bold text-slate-400">
-                    <span className="bg-[#551465] text-white px-2 py-0.5 rounded">MADA</span>
+                    <span className="bg-[#551465] text-white px-2 py-0.5 rounded">APPLE PAY</span>
                     <span className="bg-blue-950 text-blue-400 px-2 py-0.5 rounded">VISA</span>
                     <span className="bg-amber-950 text-amber-400 px-2 py-0.5 rounded">MASTERCARD</span>
                   </div>
@@ -444,7 +629,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                     type="text"
                     value={cardHolder}
                     onChange={(e) => setCardHolder(e.target.value)}
-                    placeholder="ABDULAZIZ ALSALEM"
+                    placeholder="SAEED BAWAZIR"
                     className="w-full bg-slate-900 border border-slate-800 rounded-xl p-2.5 text-white placeholder-slate-600 focus:outline-none focus:border-[#551465] uppercase"
                   />
                 </div>
@@ -490,18 +675,34 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
             {selectedPayment === 'stc_pay' && (
               <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3 text-xs">
-                <span className="font-bold text-slate-200 block">الدفع السريع عبر محفظة STC Pay / Apple Pay:</span>
+                <span className="font-bold text-slate-200 block">الدفع السريع عبر المحافظ الإلكترونية (كريمي / جيب / فلوسي / قروش / كاش ون):</span>
+                <div className="flex flex-wrap gap-2">
+                  {(['كريمي', 'جيب', 'فلوسي', 'قروش', 'كاش ون'] as const).map((wallet) => (
+                    <button
+                      key={wallet}
+                      type="button"
+                      onClick={() => setSelectedWallet(wallet)}
+                      className={`px-3 py-1.5 rounded-xl font-bold text-xs border transition ${
+                        selectedWallet === wallet
+                          ? 'bg-[#551465] text-white border-brand-400/60 shadow'
+                          : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      {wallet}
+                    </button>
+                  ))}
+                </div>
                 <div>
-                  <label className="block text-slate-400 mb-1">رقم الجوال المسجل في المحفظة</label>
+                  <label className="block text-slate-400 mb-1">رقم الجوال أو الحساب المسجل في محفظة ({selectedWallet})</label>
                   <input
                     type="tel"
                     value={stcPhone}
                     onChange={(e) => setStcPhone(e.target.value)}
-                    placeholder="05X XXX XXXX"
+                    placeholder="+967 7X XXX XXXX"
                     className="w-full bg-slate-900 border border-slate-800 rounded-xl p-2.5 text-white placeholder-slate-600 focus:outline-none focus:border-[#551465]"
                   />
                 </div>
-                <p className="text-[11px] text-slate-400">سوف يصلك إشعار فوري على تطبيق المحفظة للموافقة على تأكيد مبلغ الخصم ({total.toLocaleString()} ر.س).</p>
+                <p className="text-[11px] text-slate-400">سوف يصلك إشعار فوري على تطبيق محفظة {selectedWallet} للموافقة على تأكيد مبلغ الخصم ({total.toLocaleString()} ر.س).</p>
               </div>
             )}
 
@@ -532,7 +733,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             {selectedPayment === 'cod' && (
               <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 text-xs text-slate-300 space-y-1">
                 <span className="font-bold text-white block">الدفع عند استلام الشحنة:</span>
-                <p>سوف تقوم بدفع المبلغ كاش أو عبر شبكة مدى لمندوب التوصيل فور وصول شحنتك إلى عنوانك في {customer.city}.</p>
+                <p>سوف تقوم بدفع المبلغ نقداً أو عبر المحفظة الإلكترونية لمندوب التوصيل فور وصول شحنتك إلى عنوانك في {customer.city}.</p>
               </div>
             )}
 
@@ -569,6 +770,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 </div>
               </div>
             )}
+
+            {renderPushReminderPanel()}
 
             {paymentError && (
               <div className="bg-rose-950/60 border border-rose-500/40 text-rose-300 rounded-xl p-3 text-xs flex items-center gap-2">
@@ -621,7 +824,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                   <div>
                     <h4 className="font-extrabold text-sm text-white">{settings.storeName}</h4>
                     <span className="text-brand-300 font-bold text-[11px] block">فاتورة ضريبية مبسطة</span>
-                    <span className="text-slate-400 block text-[10px]">السجل التجاري: 1010889221 | VAT: 310992837400003</span>
+                    <span className="text-slate-400 block text-[10px]">
+                      السجل التجاري: {settings.commercialRegistration?.trim() || ''} | VAT: {settings.vatNumber?.trim() || ''}
+                    </span>
                   </div>
                 </div>
                 <div className="text-left">
@@ -715,8 +920,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 <div className="flex items-center gap-2">
                   <QrCode className="w-10 h-10 text-brand-300" />
                   <div>
-                    <span className="font-bold text-white text-[11px] block">رمز التحقق الضريبي ZATCA QR</span>
-                    <span className="text-[9px] text-slate-400">الفاتورة موثقة ومسجلة في هيئة الزكاة والضريبة والجمارك</span>
+                    <span className="font-bold text-white text-[11px] block">رمز التحقق الضريبي الإلكتروني QR</span>
+                    <span className="text-[9px] text-slate-400">فاتورة إلكترونية موثقة وصادرة رسمياً من نظام متجر رواج في الجمهورية اليمنية</span>
                   </div>
                 </div>
                 <button

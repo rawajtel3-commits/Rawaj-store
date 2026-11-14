@@ -897,7 +897,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         <span className="text-[10px] text-slate-400">{order.customer.city} • {order.customer.phone}</span>
                       </td>
                       <td className="p-3 text-slate-300">
-                        {order.paymentMethod === 'card' && '💳 مدى/فيزا'}
+                        {order.paymentMethod === 'card' && '💳 فيزا/ماستركارد'}
                         {order.paymentMethod === 'stc_pay' && '📱 محفظة رقمية'}
                         {order.paymentMethod === 'cod' && '💵 دفع عند الاستلام'}
                         {order.paymentMethod === 'tamara' && '⏳ تقسيط تمارا'}
@@ -1141,7 +1141,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         {/* Tab 4: Customers Directory */}
         {activeTab === 'customers' && (
           <div className="flex-1 overflow-y-auto p-6 space-y-4">
-            <h3 className="text-sm font-bold text-white">دليل وسجل عملاء متجر أفق:</h3>
+            <h3 className="text-sm font-bold text-white">دليل وسجل عملاء متجر رواج:</h3>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
               {orders.map((o) => (
@@ -1284,6 +1284,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       value={editableSettings.adminPhone || '770600046/780080555'}
                       onChange={(e) => setEditableSettings({ ...editableSettings, adminPhone: e.target.value })}
                       className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-300 font-medium mb-1">السجل التجاري (CR)</label>
+                    <input
+                      type="text"
+                      value={editableSettings.commercialRegistration || ''}
+                      onChange={(e) => setEditableSettings({ ...editableSettings, commercialRegistration: e.target.value })}
+                      placeholder="يُترك فارغاً للإضافة لاحقاً"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white placeholder-slate-500 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-300 font-medium mb-1">الرقم الضريبي (VAT)</label>
+                    <input
+                      type="text"
+                      value={editableSettings.vatNumber || ''}
+                      onChange={(e) => setEditableSettings({ ...editableSettings, vatNumber: e.target.value })}
+                      placeholder="يُترك فارغاً للإضافة لاحقاً"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white placeholder-slate-500 font-mono"
                     />
                   </div>
                 </div>

@@ -14,6 +14,12 @@
   --color-brand-950: #2a0733;
 }
 
+html,
+body {
+  overscroll-behavior-y: contain;
+  -webkit-tap-highlight-color: transparent;
+}
+
 /* ==========================================================================
    High-Contrast Light Mode (Accessibility & Preference)
    ========================================================================== */
@@ -186,8 +192,19 @@ html[data-theme="light"] .rawaj-promo-bar {
   background-image: linear-gradient(to right, #551465, #461253, #2a0733);
 }
 html[data-theme="light"] .rawaj-promo-bar .text-brand-100,
-html[data-theme="light"] .rawaj-promo-bar .text-brand-300 {
+html[data-theme="light"] .rawaj-promo-bar .text-brand-300,
+html[data-theme="light"] .rawaj-promo-bar .text-purple-100\/90,
+html[data-theme="light"] .rawaj-promo-bar .text-purple-200 {
   color: #f3e8ff;
+}
+html[data-theme="light"] .rawaj-promo-bar .text-amber-300 {
+  color: #fcd34d;
+}
+html[data-theme="light"] .rawaj-promo-bar .text-amber-200 {
+  color: #fde68a;
+}
+html[data-theme="light"] .rawaj-promo-bar .text-emerald-300 {
+  color: #6ee7b7;
 }
 html[data-theme="light"] .rawaj-promo-bar select {
   background-color: #ffffff;
@@ -238,6 +255,78 @@ html[data-whitelabel="active"] .bg-\[\#551465\] {
 }
 html[data-whitelabel="active"] .border-\[\#551465\] {
   border-color: var(--color-brand-700);
+}
+
+/* Brand-colored Mobile Bottom Navigation Bar (matches top bar & app purple #551465) */
+.rawaj-bottom-nav,
+html[data-theme="light"] .rawaj-bottom-nav {
+  background-image: linear-gradient(to right, #551465, #461253, #2a0733);
+  color: #ffffff;
+}
+
+.rawaj-bottom-nav .rawaj-nav-icon-active,
+html[data-theme="light"] .rawaj-bottom-nav .rawaj-nav-icon-active {
+  background-color: rgba(255, 255, 255, 0.22);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.38);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 4px 12px rgba(0, 0, 0, 0.22);
+}
+
+.rawaj-bottom-nav .rawaj-nav-icon-idle,
+html[data-theme="light"] .rawaj-bottom-nav .rawaj-nav-icon-idle {
+  color: #f3e8ff;
+}
+
+.rawaj-bottom-nav button:hover .rawaj-nav-icon-idle,
+html[data-theme="light"] .rawaj-bottom-nav button:hover .rawaj-nav-icon-idle {
+  background-color: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+}
+
+.rawaj-bottom-nav .rawaj-nav-label-active,
+html[data-theme="light"] .rawaj-bottom-nav .rawaj-nav-label-active {
+  color: #ffffff;
+}
+
+.rawaj-bottom-nav .rawaj-nav-label-idle,
+html[data-theme="light"] .rawaj-bottom-nav .rawaj-nav-label-idle {
+  color: rgba(243, 232, 255, 0.9);
+}
+
+.rawaj-bottom-nav .rawaj-nav-badge,
+html[data-theme="light"] .rawaj-bottom-nav .rawaj-nav-badge {
+  background-color: #fbbf24;
+  color: #0f172a;
+  border: 2px solid #461253;
+}
+
+/* Custom Brand Scrollbar ("شريط السحب") */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #751a92 transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(85, 20, 101, 0.08);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #9127b3, #551465);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #af3fd2, #751a92);
+  border: 1px solid transparent;
+  background-clip: padding-box;
 }
 
 

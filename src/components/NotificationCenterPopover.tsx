@@ -7,6 +7,7 @@ import {
   Trash2,
   ArrowUpLeft,
   X,
+  ShoppingBag,
 } from 'lucide-react';
 import { InAppNotification, PriceDropAlert, Product, StoreSettings } from '../types';
 import { formatPrice } from '../utils/currency';
@@ -22,6 +23,7 @@ interface NotificationCenterPopoverProps {
   onClearNotifications: () => void;
   onRemovePriceAlert: (productId: string) => void;
   onOpenProduct: (product: Product) => void;
+  onOpenCart?: () => void;
 }
 
 export const NotificationCenterPopover: React.FC<NotificationCenterPopoverProps> = ({
@@ -34,6 +36,7 @@ export const NotificationCenterPopover: React.FC<NotificationCenterPopoverProps>
   onClearNotifications,
   onRemovePriceAlert,
   onOpenProduct,
+  onOpenCart,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [tab, setTab] = useState<'notifications' | 'alerts'>('notifications');
@@ -61,6 +64,11 @@ export const NotificationCenterPopover: React.FC<NotificationCenterPopoverProps>
 
   const handleNotificationClick = (notif: InAppNotification) => {
     onMarkAsRead(notif.id);
+    if (notif.type === 'checkout_reminder' || notif.actionType === 'open_cart') {
+      setIsOpen(false);
+      onOpenCart?.();
+      return;
+    }
     if (notif.productId) {
       const target = products.find((p) => p.id === notif.productId);
       if (target) {
@@ -174,15 +182,33 @@ export const NotificationCenterPopover: React.FC<NotificationCenterPopoverProps>
                           className="w-full h-full object-cover"
                         />
                       ) : (
-                        <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0">
-                          <TrendingDown className="w-4 h-4 text-emerald-400" />
+                        <div
+                          className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
+                            notif.type === 'checkout_reminder'
+                              ? 'bg-[#551465]/25 border-brand-400/40'
+                              : 'bg-emerald-500/15 border-emerald-500/30'
+                          }`}
+                        >
+                          {notif.type === 'checkout_reminder' ? (
+                            <BellRing className="w-4 h-4 text-amber-300" />
+                          ) : (
+                            <TrendingDown className="w-4 h-4 text-emerald-400" />
+                          )}
                         </div>
                       )}
 
                       <div className="flex-1 min-w-0 space-y-1">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-extrabold text-emerald-400 flex items-center gap-1">
-                            <TrendingDown className="w-3.5 h-3.5" />
+                          <span
+                            className={`text-xs font-extrabold flex items-center gap-1 ${
+                              notif.type === 'checkout_reminder' ? 'text-amber-300' : 'text-emerald-400'
+                            }`}
+                          >
+                            {notif.type === 'checkout_reminder' ? (
+                              <BellRing className="w-3.5 h-3.5" />
+                            ) : (
+                              <TrendingDown className="w-3.5 h-3.5" />
+                            )}
                             <span>{notif.title}</span>
                           </span>
                           {!notif.read && (
@@ -204,7 +230,24 @@ export const NotificationCenterPopover: React.FC<NotificationCenterPopoverProps>
                           </div>
                         )}
 
-                        {notif.productId && (
+                        {notif.totalAmount !== undefined && (
+                          <div className="text-[11px] font-bold text-brand-300 tabular-nums pt-0.5">
+                            الإجمالي: {formatPrice(notif.totalAmount, settings.activeCurrency, settings.yerExchangeRate)}
+                          </div>
+                        )}
+
+                        {(notif.type === 'checkout_reminder' || notif.actionType === 'open_cart') && (
+                          <button
+                            type="button"
+                            onClick={() => handleNotificationClick(notif)}
+                            className="mt-1 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#551465] hover:bg-brand-700 text-white text-[11px] font-extrabold transition"
+                          >
+                            <ShoppingBag className="w-3.5 h-3.5 text-amber-300" />
+                            <span>إكمال الطلب</span>
+                          </button>
+                        )}
+
+                        {notif.productId && notif.type !== 'checkout_reminder' && (
                           <button
                             type="button"
                             onClick={() => handleNotificationClick(notif)}

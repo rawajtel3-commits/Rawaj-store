@@ -32,7 +32,7 @@ export const SellerChatModal: React.FC<SellerChatModalProps> = ({
   if (!isOpen) return null;
 
   const quickInquiries = [
-    'متى موعد التوصيل للرياض أو جدة؟',
+    'متى موعد التوصيل للمكلا أو صنعاء أو عدن؟',
     'هل يتوفر ضمان محلي معتمد مع الجهاز؟',
     'هل هناك خصم للكميات والجملة؟',
     'ما هي سياسة الاسترجاع والاستبدال؟',

@@ -93,7 +93,7 @@ export const Footer: React.FC<FooterProps> = ({
             </div>
             <div>
               <h4 className="font-bold text-white">دفع آمن وتقسيط 0%</h4>
-              <p className="text-slate-400 text-[11px]">مدى، تمارا، تابي، Apple Pay</p>
+              <p className="text-slate-400 text-[11px]">فيزا، ماستركارد، محافظ محلية، Apple Pay</p>
             </div>
           </div>
         </div>
@@ -118,10 +118,10 @@ export const Footer: React.FC<FooterProps> = ({
               </div>
             </div>
             <p className="text-slate-400 leading-relaxed text-[11px]">
-              متجر رواج - وجهتك الموثوقة للتسوق الإلكتروني الأحدث والمنتجات الذكية الأصلية 100% مع الضمان المحلي وتوصيل لجميع مناطق المملكة.
+              متجر رواج - وجهتك الموثوقة للتسوق الإلكتروني الأحدث والمنتجات الذكية الأصلية 100% مع الضمان المحلي وتوصيل لجميع محافظات الجمهورية اليمنية.
             </p>
             <div className="space-y-1.5 text-slate-400 text-[11px]">
-              <p className="flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-brand-300" /> {settings.location || 'اليمن، حضرموت'}</p>
+              <p className="flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-brand-300" /> {settings.location || 'الجمهورية اليمنية، حضرموت'}</p>
               <p className="flex items-center gap-1.5"><PhoneCall className="w-3.5 h-3.5 text-emerald-400" /> <strong className="text-slate-300 font-normal">خدمة العملاء:</strong> {settings.customerServicePhone || settings.supportPhone || '733513128'}</p>
               <p className="flex items-center gap-1.5"><PhoneCall className="w-3.5 h-3.5 text-purple-300" /> <strong className="text-slate-300 font-normal">الإدارة:</strong> {settings.adminPhone || '770600046 / 780080555'}</p>
               <p className="flex items-center gap-1.5"><Mail className="w-3.5 h-3.5 text-indigo-400" /> {settings.supportEmail || 'saad@rawajye.com'}</p>
@@ -209,7 +209,7 @@ export const Footer: React.FC<FooterProps> = ({
               <li>
                 <button onClick={() => onNavigate?.('about')} className="hover:text-white transition flex items-center gap-1">
                   <Building2 className="w-3 h-3 text-brand-300" />
-                  <span>عن المتجر وتوثيق المركز السعودي</span>
+                  <span>عن المتجر والتوثيق الرسمي في اليمن</span>
                 </button>
               </li>
               <li>
@@ -225,19 +225,21 @@ export const Footer: React.FC<FooterProps> = ({
           <div className="space-y-3">
             <h4 className="font-bold text-white text-sm">التوثيق وطرق الدفع المقبولة</h4>
             <div className="flex flex-wrap gap-1.5 font-extrabold text-[10px]">
-              <span className="bg-slate-900 border border-slate-800 px-2.5 py-1 rounded text-emerald-400">مدى MADA</span>
+              <span className="bg-slate-900 border border-slate-800 px-2.5 py-1 rounded text-emerald-400">كريمي</span>
+              <span className="bg-slate-900 border border-slate-800 px-2.5 py-1 rounded text-teal-300">جيب</span>
+              <span className="bg-slate-900 border border-slate-800 px-2.5 py-1 rounded text-cyan-300">فلوسي</span>
+              <span className="bg-slate-900 border border-slate-800 px-2.5 py-1 rounded text-violet-300">قروش</span>
+              <span className="bg-slate-900 border border-slate-800 px-2.5 py-1 rounded text-lime-300">كاش ون</span>
               <span className="bg-slate-900 border border-slate-800 px-2.5 py-1 rounded text-blue-400">VISA</span>
               <span className="bg-slate-900 border border-slate-800 px-2.5 py-1 rounded text-amber-400">MasterCard</span>
               <span className="bg-slate-900 border border-slate-800 px-2.5 py-1 rounded text-slate-100">Apple Pay</span>
-              <span className="bg-slate-900 border border-slate-800 px-2.5 py-1 rounded text-teal-300">STC Pay</span>
-              <span className="bg-slate-900 border border-slate-800 px-2.5 py-1 rounded text-purple-400">تمارا Tamara</span>
-              <span className="bg-slate-900 border border-slate-800 px-2.5 py-1 rounded text-pink-400">تابي Tabby</span>
+              <span className="bg-slate-900 border border-slate-800 px-2.5 py-1 rounded text-purple-400">الدفع عند الاستلام</span>
             </div>
 
             <div className="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800 text-[10px] text-slate-400 space-y-1">
-              <p>الرقم الضريبي VAT: <strong className="text-slate-200 font-mono">310992837400003</strong></p>
-              <p>السجل التجاري CR: <strong className="text-slate-200 font-mono">1010889221</strong></p>
-              <p className="text-emerald-400 font-medium">متجر موثق في منصة الأعمال السعودية ☑️</p>
+              <p>الرقم الضريبي VAT: <strong className="text-slate-200 font-mono">{settings.vatNumber?.trim() || ''}</strong></p>
+              <p>السجل التجاري CR: <strong className="text-slate-200 font-mono">{settings.commercialRegistration?.trim() || ''}</strong></p>
+              <p className="text-emerald-400 font-medium">متجر موثق في الجمهورية اليمنية ☑️</p>
             </div>
           </div>
         </div>
@@ -266,7 +268,7 @@ export const Footer: React.FC<FooterProps> = ({
                 )}
               </button>
             )}
-            <p className="text-slate-400">متجر رواج الإلكتروني الذكي — اليمن، حضرموت</p>
+            <p className="text-slate-400">متجر رواج الإلكتروني الذكي — الجمهورية اليمنية، حضرموت</p>
           </div>
         </div>
       </div>

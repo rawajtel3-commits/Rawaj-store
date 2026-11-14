@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { 
   Sparkles, 
   MessageSquareText, 
@@ -65,6 +65,10 @@ import { ProductCompareModal } from './components/ProductCompareModal';
 import { FlashOfferBanner } from './components/FlashOfferBanner';
 import { MobileBottomNav } from './components/MobileBottomNav';
 import { ProductFilterSidebar, BrandFacet } from './components/ProductFilterSidebar';
+import { OfflineIndicator } from './components/OfflineIndicator';
+import { CheckoutReminderToast } from './components/CheckoutReminderToast';
+import { sendCheckoutReminderPushNotification } from './utils/checkoutReminder';
+import { formatPrice } from './utils/currency';
 
 export default function App() {
   // Navigation & Page State (with SEO deep-link support)
@@ -325,6 +329,9 @@ export default function App() {
     loadNotifications()
   );
   const [activePriceDropToast, setActivePriceDropToast] = useState<InAppNotification | null>(null);
+  const [activeCheckoutReminderToast, setActiveCheckoutReminderToast] =
+    useState<InAppNotification | null>(null);
+  const checkoutReminderTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     saveBrowsingHistory(browsingHistory);
@@ -385,6 +392,116 @@ export default function App() {
   const handleClearNotifications = () => {
     setNotifications([]);
   };
+
+  const handleCancelCheckoutReminder = () => {
+    if (checkoutReminderTimerRef.current !== null) {
+      window.clearTimeout(checkoutReminderTimerRef.current);
+      checkoutReminderTimerRef.current = null;
+    }
+  };
+
+  const handleCompleteOrderFromReminder = (notificationId?: string) => {
+    if (notificationId) {
+      handleMarkNotificationRead(notificationId);
+    }
+    setActiveCheckoutReminderToast(null);
+    setSelectedProduct(null);
+    setIsAIAssistantOpen(false);
+    setIsSellerChatOpen(false);
+    setIsAdminOpen(false);
+    setIsCheckoutOpen(false);
+    setIsCartOpen(true);
+  };
+
+  const handleScheduleCheckoutReminder = (
+    delayMs: number,
+    snapshot: {
+      itemsCount: number;
+      total: number;
+      firstItemName: string;
+      firstItemImage?: string;
+    }
+  ) => {
+    handleCancelCheckoutReminder();
+    if (snapshot.itemsCount <= 0) return;
+
+    checkoutReminderTimerRef.current = window.setTimeout(() => {
+      checkoutReminderTimerRef.current = null;
+      const formattedTotal = formatPrice(
+        snapshot.total,
+        settings.activeCurrency,
+        settings.yerExchangeRate
+      );
+      const reminderNotif: InAppNotification = {
+        id: `chk-rem-${Date.now()}`,
+        type: 'checkout_reminder',
+        actionType: 'open_cart',
+        productName: snapshot.firstItemName,
+        productImage: snapshot.firstItemImage,
+        itemsCount: snapshot.itemsCount,
+        totalAmount: snapshot.total,
+        title: 'تذكير: لم تكمل عملية الدفع',
+        message: `لديك ${snapshot.itemsCount} منتج في سلة المشتريات بقيمة ${formattedTotal} (${snapshot.firstItemName}${snapshot.itemsCount > 1 ? ' وغيرها' : ''}). اضغط «إكمال الطلب» للعودة للسلة.`,
+        read: false,
+        createdAt: new Date().toISOString(),
+      };
+
+      setNotifications((prev) => [
+        reminderNotif,
+        ...prev.filter((n) => n.type !== 'checkout_reminder').slice(0, 29),
+      ]);
+      setActiveCheckoutReminderToast(reminderNotif);
+
+      void sendCheckoutReminderPushNotification(
+        {
+          title: reminderNotif.title,
+          message: reminderNotif.message,
+          itemsCount: snapshot.itemsCount,
+          totalAmountFormatted: formattedTotal,
+          iconUrl: settings.logoUrl || '/pwa-192x192.png',
+        },
+        () => handleCompleteOrderFromReminder(reminderNotif.id)
+      );
+    }, Math.max(1000, delayMs));
+  };
+
+  useEffect(() => {
+    if (cartItems.length === 0) {
+      handleCancelCheckoutReminder();
+      setActiveCheckoutReminderToast(null);
+    }
+  }, [cartItems.length]);
+
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('openCart') === '1') {
+        setIsCartOpen(true);
+        params.delete('openCart');
+        const nextSearch = params.toString();
+        const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`;
+        window.history.replaceState({}, '', nextUrl);
+      }
+    } catch {
+      // Ignore
+    }
+
+    const handleSWMessage = (event: MessageEvent) => {
+      if (event.data && event.data.type === 'OPEN_CART_FROM_PUSH') {
+        handleCompleteOrderFromReminder();
+      }
+    };
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', handleSWMessage);
+    }
+    return () => {
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.removeEventListener('message', handleSWMessage);
+      }
+      handleCancelCheckoutReminder();
+    };
+  }, []);
 
   const handleOpenProductDetail = (product: Product, mode: 'images' | 'video' = 'images') => {
     setBrowsingHistory((prev) => recordBrowsingView(prev, product));
@@ -594,7 +711,7 @@ export default function App() {
       const sellerReply: SellerChatMessage = {
         id: `msg-seller-${Date.now()}`,
         sender: 'seller',
-        senderName: 'فريق خدمة عملاء متجر أفق',
+        senderName: 'فريق خدمة عملاء متجر رواج',
         text: data.reply || 'تم استلام رسالتك وسوف يتواصل معك مسؤول المبيعات فوراً.',
         timestamp: data.timestamp || new Date().toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' }),
       };
@@ -627,6 +744,9 @@ export default function App() {
 
   // Order Completed Event (Updates orders, clears cart, awards & deducts loyalty points)
   const handleOrderCompleted = (newOrder: Order) => {
+    handleCancelCheckoutReminder();
+    setActiveCheckoutReminderToast(null);
+    setNotifications((prev) => prev.filter((n) => n.type !== 'checkout_reminder'));
     setOrders((prev) => [newOrder, ...prev]);
     setCartItems([]);
     setAppliedDiscount(0);
@@ -960,7 +1080,7 @@ export default function App() {
                   </h2>
 
                   <p className="text-slate-300 text-xs sm:text-sm max-w-2xl leading-relaxed">
-                    اكتشف تجربة تسوق متطورة باللغة العربية: مواصفات تفصيلية، خيارات تخصيص ونقش مجاني، أنظمة دفع آمنة (مدى، تقسيط تمارا، محفظة STC Pay)، ومساعد ذكي يختار الأنسب لميزانيتك.
+                    اكتشف تجربة تسوق متطورة باللغة العربية: مواصفات تفصيلية، خيارات تخصيص ونقش مجاني، أنظمة دفع آمنة (بطاقات ائتمان، محافظ إلكترونية محلية، الدفع عند الاستلام)، ومساعد ذكي يختار الأنسب لميزانيتك.
                   </p>
 
                   <div className="flex flex-wrap items-center gap-3 pt-2">
@@ -995,7 +1115,7 @@ export default function App() {
                       </div>
                       <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-xl">
                         <Truck className="w-4 h-4 text-purple-300 shrink-0" />
-                        <span>توصيل خلال 24-48 ساعة داخل المملكة</span>
+                        <span>توصيل خلال 24-48 ساعة داخل الجمهورية اليمنية</span>
                       </div>
                       <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-xl">
                         <Zap className="w-4 h-4 text-amber-400 shrink-0" />
@@ -1379,6 +1499,8 @@ export default function App() {
         initialLoyaltyPointsToRedeem={checkoutLoyaltyPointsToRedeem || pendingRedeemPoints}
         userProfile={userProfile}
         onOrderCompleted={handleOrderCompleted}
+        onScheduleCheckoutReminder={handleScheduleCheckoutReminder}
+        onCancelCheckoutReminder={handleCancelCheckoutReminder}
         settings={settings}
       />
 
@@ -1467,6 +1589,16 @@ export default function App() {
         }}
       />
 
+      {/* Floating Abandoned Checkout Push Notification Toast */}
+      <CheckoutReminderToast
+        notification={activeCheckoutReminderToast}
+        settings={settings}
+        onDismiss={() => setActiveCheckoutReminderToast(null)}
+        onCompleteOrder={() =>
+          handleCompleteOrderFromReminder(activeCheckoutReminderToast?.id)
+        }
+      />
+
       {/* Persistent Mobile Bottom Navigation Bar */}
       <MobileBottomNav
         currentView={currentView}
@@ -1495,6 +1627,9 @@ export default function App() {
         onOpenProduct={(p) => handleOpenProductDetail(p, 'images')}
         onMarkNotificationRead={handleMarkNotificationRead}
       />
+
+      {/* Offline Mode Connectivity Indicator */}
+      <OfflineIndicator />
     </div>
   );
 }

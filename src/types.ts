@@ -183,6 +183,8 @@ export interface StoreSettings {
   location?: string;
   adminPhone?: string;
   customerServicePhone?: string;
+  commercialRegistration?: string;
+  vatNumber?: string;
 }
 
 export type ThemeMode = 'dark' | 'light';
@@ -376,13 +378,16 @@ export interface PriceDropAlert {
 
 export interface InAppNotification {
   id: string;
-  type: 'price_drop' | 'system';
+  type: 'price_drop' | 'checkout_reminder' | 'system';
+  actionType?: 'open_cart' | 'open_product';
   productId?: string;
   productName?: string;
   productImage?: string;
   oldPrice?: number;
   newPrice?: number;
   discountPercent?: number;
+  itemsCount?: number;
+  totalAmount?: number;
   title: string;
   message: string;
   read: boolean;
