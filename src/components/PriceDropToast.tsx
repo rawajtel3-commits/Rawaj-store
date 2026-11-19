@@ -68,13 +68,23 @@ export const PriceDropToast: React.FC<PriceDropToastProps> = ({
           </p>
 
           {notification.oldPrice !== undefined && notification.newPrice !== undefined && (
-            <div className="flex items-center gap-2 text-xs tabular-nums pt-0.5">
+            <div className="flex flex-wrap items-center gap-2 text-xs tabular-nums pt-0.5">
               <span className="font-extrabold text-white">
                 {formatPrice(notification.newPrice, settings.activeCurrency, settings.yerExchangeRate)}
               </span>
               <span className="text-[11px] text-slate-500 line-through">
                 {formatPrice(notification.oldPrice, settings.activeCurrency, settings.yerExchangeRate)}
               </span>
+              {notification.targetPrice !== undefined && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/40 text-emerald-300">
+                  الهدف:{' '}
+                  {formatPrice(
+                    notification.targetPrice,
+                    settings.activeCurrency,
+                    settings.yerExchangeRate
+                  )}
+                </span>
+              )}
             </div>
           )}
         </div>

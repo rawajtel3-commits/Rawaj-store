@@ -288,6 +288,20 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({
               </div>
             )}
 
+            {order.loyaltyDiscount && order.loyaltyDiscount > 0 ? (
+              <div className="flex justify-between text-amber-400 print:text-amber-700 font-bold">
+                <span>خصم نقاط الولاء:</span>
+                <span>-{formatPrice(order.loyaltyDiscount, settings.activeCurrency, settings.yerExchangeRate)}</span>
+              </div>
+            ) : null}
+
+            {order.giftVoucherDiscount && order.giftVoucherDiscount > 0 ? (
+              <div className="flex justify-between text-emerald-400 print:text-emerald-700 font-bold">
+                <span>خصم قسيمة الهدية ({order.giftVoucherCode || 'GIFT'}):</span>
+                <span>-{formatPrice(order.giftVoucherDiscount, settings.activeCurrency, settings.yerExchangeRate)}</span>
+              </div>
+            ) : null}
+
             <div className="flex justify-between text-slate-300 print:text-slate-700">
               <span>ضريبة القيمة المضافة ({settings.vatPercentage || 15}%):</span>
               <span>{formatPrice(order.vat, settings.activeCurrency, settings.yerExchangeRate)}</span>

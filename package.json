@@ -5,21 +5,34 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "tsx --test tests/masterPromptSecurity.test.ts tests/performanceMonitor.test.ts tests/securityAlerts.test.ts tests/financialExport.test.ts tests/behaviorAnalytics.test.ts tests/adminModificationLogs.test.ts tests/operationalExtensions.test.ts tests/amazonSaIntegration.test.ts tests/merchantRatings.test.ts tests/arTryOn.test.ts tests/androidIntegration.test.ts tests/priceAlerts.test.ts"
   },
   "dependencies": {
+    "@firebase/eslint-plugin-security-rules": "^0.0.2",
     "@google/genai": "^3.3.0",
     "@tailwindcss/vite": "^4.1.14",
+    "@types/qrcode": "^1.5.6",
+    "@types/three": "^0.187.0",
     "@vitejs/plugin-react": "^5.0.4",
     "dotenv": "^17.2.3",
+    "eslint": "^10.15.0",
     "express": "^4.21.2",
+    "fflate": "^0.8.3",
+    "firebase": "^13.3.0",
+    "html-to-image": "^1.11.13",
+    "jspdf": "^4.2.1",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
+    "qrcode": "^1.5.4",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
+    "react-ga4": "^3.0.1",
+    "recharts": "^3.10.1",
+    "three": "^0.187.0",
     "vite": "^6.2.3"
   },
   "devDependencies": {
@@ -32,5 +45,10 @@
     "typescript": "~5.8.2",
     "vite": "^6.2.3",
     "vite-plugin-pwa": "^2.0.0"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "^1.14.7",
+    "glob": "^14.0.6",
+    "minimatch": "^11.0.8"
   }
 }

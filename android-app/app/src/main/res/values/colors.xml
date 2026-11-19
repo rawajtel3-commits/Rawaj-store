@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="rawaj_primary">#551465</color>
+    <color name="rawaj_primary_dark">#2A0733</color>
+    <color name="rawaj_accent">#D946EF</color>
+    <color name="rawaj_surface">#0F172A</color>
+    <color name="rawaj_bg">#020617</color>
+    <color name="rawaj_text_primary">#F8FAFC</color>
+    <color name="rawaj_text_secondary">#CBD5E1</color>
+</resources>

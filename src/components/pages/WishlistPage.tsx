@@ -11,6 +11,7 @@ import {
 import { Product, StoreSettings } from '../../types';
 import { formatPrice } from '../../utils/currency';
 import { LazyImage } from '../LazyImage';
+import { ProductShareButton } from '../ProductShareButton';
 
 interface WishlistPageProps {
   products: Product[];
@@ -132,6 +133,11 @@ export const WishlistPage: React.FC<WishlistPageProps> = ({
                 </div>
 
                 <div className="flex items-center gap-1.5">
+                  <ProductShareButton
+                    product={product}
+                    settings={settings}
+                    variant="icon"
+                  />
                   {onToggleCompare && (
                     <button
                       type="button"

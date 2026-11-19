@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   X, 
   TrendingUp, 
@@ -24,11 +24,48 @@ import {
   Flame,
   Palette,
   BellRing,
-  TrendingDown
+  TrendingDown,
+  FileCode2,
+  Copy,
+  Check,
+  Terminal,
+  ShieldCheck,
+  ShieldAlert,
+  Lock,
+  KeyRound,
+  RefreshCw,
+  Download,
+  ToggleLeft,
+  ToggleRight,
+  UserCog,
+  Activity,
+  Table2,
+  QrCode,
 } from 'lucide-react';
-import { Product, Order, AdminStats, StoreSettings, Category, CurrencyCode, ReturnRequest, ReturnRequestStatus, FlashOfferConfig, PriceDropAlert } from '../types';
+import {
+  Product,
+  Order,
+  AdminStats,
+  StoreSettings,
+  Category,
+  CurrencyCode,
+  ReturnRequest,
+  ReturnRequestStatus,
+  FlashOfferConfig,
+  PriceDropAlert,
+  AuthUserRole,
+  MasterPromptMetadata,
+  MasterPromptAuditEntry,
+  SecurityAlertRecord,
+  isPromoterAdminRole
+} from '../types';
 import { formatPrice } from '../utils/currency';
 import { AdminFlashOfferManager } from './AdminFlashOfferManager';
+import { AdminAnalyticsCharts } from './AdminAnalyticsCharts';
+import { AdminPerformanceMonitor } from './AdminPerformanceMonitor';
+import { AdminSecurityAlerts } from './AdminSecurityAlerts';
+import { AdminBehaviorAnalytics } from './AdminBehaviorAnalytics';
+import { ShippingWaybillModal } from './ShippingWaybillModal';
 import { LazyImage } from './LazyImage';
 
 interface AdminDashboardProps {
@@ -51,6 +88,16 @@ interface AdminDashboardProps {
   settings: StoreSettings;
   onSaveSettings: (newSettings: StoreSettings) => void;
   onOpenWhiteLabelStudio?: () => void;
+  onOpenMasterPrompt?: () => void;
+  authUserEmail?: string;
+  adminRole?: AuthUserRole;
+  originalAdminRole?: AuthUserRole;
+  canAccessMasterPrompt?: boolean;
+  masterPromptFeatureEnabled?: boolean;
+  onCapabilitiesChanged?: () => Promise<void>;
+  onSwitchRolePreview?: (targetRole: 'promoter_admin' | 'user_admin') => Promise<void>;
+  onLockAdmin?: () => void;
+  isAuthorized?: boolean;
 }
 
 const IMAGE_PRESETS = [
@@ -82,11 +129,45 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   settings,
   onSaveSettings,
   onOpenWhiteLabelStudio,
+  onOpenMasterPrompt,
+  authUserEmail,
+  adminRole = 'user_admin',
+  originalAdminRole,
+  canAccessMasterPrompt = false,
+  masterPromptFeatureEnabled = true,
+  onCapabilitiesChanged,
+  onSwitchRolePreview,
+  onLockAdmin,
+  isAuthorized = false,
 }) => {
-  const [activeTab, setActiveTab] = useState<'analytics' | 'products' | 'orders' | 'returns' | 'flash-offer' | 'customers' | 'settings'>('analytics');
+  const [activeTab, setActiveTab] = useState<'analytics' | 'behavior-analytics' | 'performance' | 'security-alerts' | 'products' | 'orders' | 'returns' | 'flash-offer' | 'customers' | 'settings' | 'master-prompt'>('analytics');
   const [returnFilter, setReturnFilter] = useState<'all' | ReturnRequestStatus>('all');
   const [returnAdminNotes, setReturnAdminNotes] = useState<Record<string, string>>({});
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [promptCopied, setPromptCopied] = useState(false);
+
+  // Live Security Alerts State
+  const [unreadAlertsCount, setUnreadAlertsCount] = useState(0);
+  const [latestUnreadAlert, setLatestUnreadAlert] = useState<SecurityAlertRecord | null>(null);
+  const [securityBannerEnabled, setSecurityBannerEnabled] = useState(true);
+  const [compactMode, setCompactMode] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('rawaj-admin-compact-mode') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [waybillOrder, setWaybillOrder] = useState<Order | null>(null);
+
+  // Server-fetched Master Prompt Vault State (promoter_admin ONLY)
+  const isPromoterAdmin = isPromoterAdminRole(adminRole);
+  const [promptLoading, setPromptLoading] = useState(false);
+  const [promptContent, setPromptContent] = useState<string | null>(null);
+  const [promptMeta, setPromptMeta] = useState<MasterPromptMetadata | null>(null);
+  const [promptError, setPromptError] = useState<{ status?: number; code?: string; message: string; accessRefId?: string } | null>(null);
+  const [promptAuditLogs, setPromptAuditLogs] = useState<MasterPromptAuditEntry[]>([]);
+  const [vaultBusy, setVaultBusy] = useState(false);
+  const [roleSwitching, setRoleSwitching] = useState(false);
 
   // New Product Modal State
   const [isAddProductOpen, setIsAddProductOpen] = useState(false);
@@ -114,11 +195,119 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Editable settings state
   const [editableSettings, setEditableSettings] = useState<StoreSettings>(settings);
 
-  if (!isOpen) return null;
+  const loadMasterPromptVault = useCallback(async () => {
+    if (!isPromoterAdmin) {
+      setPromptContent(null);
+      setPromptMeta(null);
+      setPromptAuditLogs([]);
+      return;
+    }
+    setPromptLoading(true);
+    setPromptError(null);
+    try {
+      const [promptRes, auditRes] = await Promise.all([
+        fetch('/api/admin/master-prompt', { cache: 'no-store' }),
+        fetch('/api/admin/master-prompt/audit?limit=30', { cache: 'no-store' }),
+      ]);
+      const promptData = await promptRes.json().catch(() => ({}));
+      if (!promptRes.ok) {
+        setPromptContent(null);
+        setPromptMeta(null);
+        setPromptError({
+          status: promptRes.status,
+          code: promptData.code || 'ACCESS_DENIED',
+          message: promptData.error || 'غير مصرح بعرض البرومبت الهندسي.',
+          accessRefId: promptData.accessRefId,
+        });
+      } else {
+        setPromptContent(typeof promptData.prompt === 'string' ? promptData.prompt : null);
+        setPromptMeta(promptData.metadata || null);
+      }
+
+      if (auditRes.ok) {
+        const auditData = await auditRes.json().catch(() => ({}));
+        setPromptAuditLogs(Array.isArray(auditData.entries) ? auditData.entries : []);
+        if (!promptRes.ok && auditData.metadata) {
+          setPromptMeta(auditData.metadata);
+        }
+      }
+    } catch {
+      setPromptContent(null);
+      setPromptError({
+        status: 500,
+        code: 'NETWORK_ERROR',
+        message: 'تعذر الاتصال بخادم الخزنة الآمنة للبرومبت الهندسي.',
+      });
+    } finally {
+      setPromptLoading(false);
+    }
+  }, [isPromoterAdmin]);
+
+  // Wipe secret prompt from client memory immediately whenever modal closes or role is downgraded to user_admin
+  useEffect(() => {
+    if (!isOpen || !isAuthorized || !isPromoterAdmin) {
+      setPromptContent(null);
+      setPromptMeta(null);
+      setPromptAuditLogs([]);
+      setPromptError(null);
+      setPromptCopied(false);
+      if (activeTab === 'master-prompt') {
+        setActiveTab('analytics');
+      }
+    }
+  }, [isOpen, isAuthorized, isPromoterAdmin, activeTab]);
+
+  useEffect(() => {
+    if (isOpen && isAuthorized && isPromoterAdmin && activeTab === 'master-prompt') {
+      void loadMasterPromptVault();
+    }
+  }, [isOpen, isAuthorized, isPromoterAdmin, activeTab, loadMasterPromptVault]);
+
+  const pollSecurityAlertsSummary = useCallback(async () => {
+    if (!isOpen || !isAuthorized) return;
+    try {
+      const res = await fetch('/api/admin/security-alerts', { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      setUnreadAlertsCount(Number(data.unreadCount || 0));
+      setSecurityBannerEnabled(Boolean(data?.settings?.dashboardEnabled ?? true));
+      const unread = Array.isArray(data.alerts)
+        ? (data.alerts as SecurityAlertRecord[]).find((a) => a.status === 'unread') || null
+        : null;
+      setLatestUnreadAlert(unread);
+    } catch {
+      // Ignore transient polling error
+    }
+  }, [isOpen, isAuthorized]);
+
+  useEffect(() => {
+    if (!isOpen || !isAuthorized) return;
+    void pollSecurityAlertsSummary();
+    const timer = setInterval(() => {
+      void pollSecurityAlertsSummary();
+    }, 30_000);
+    return () => clearInterval(timer);
+  }, [isOpen, isAuthorized, pollSecurityAlertsSummary]);
+
+  if (!isOpen || !isAuthorized) return null;
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  const handleToggleCompactMode = (next: boolean) => {
+    setCompactMode(next);
+    try {
+      localStorage.setItem('rawaj-admin-compact-mode', next ? '1' : '0');
+    } catch {
+      // Ignore storage quota errors
+    }
+    showToast(
+      next
+        ? 'تم تفعيل الوضع المدمج: إخفاء الرسوم الكبيرة وعرض جداول المبيعات التفصيلية'
+        : 'تمت العودة إلى وضع الرسوم البيانية التفاعلية'
+    );
   };
 
   const handleAddSpec = () => {
@@ -209,7 +398,88 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-[11px] font-extrabold ${
+                isPromoterAdmin
+                  ? 'bg-indigo-950/70 border-indigo-500/50 text-indigo-200'
+                  : 'bg-sky-950/70 border-sky-500/40 text-sky-200'
+              }`}
+            >
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>{isPromoterAdmin ? 'أدمن المروّج (promoter_admin)' : 'أدمن المتجر (user_admin)'}</span>
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={compactMode}
+              onClick={() => {
+                const next = !compactMode;
+                handleToggleCompactMode(next);
+                if (next && activeTab !== 'analytics') {
+                  setActiveTab('analytics');
+                }
+              }}
+              className={`px-2.5 py-1.5 rounded-xl border text-[11px] font-bold flex items-center gap-2 transition whitespace-nowrap shrink-0 ${
+                compactMode
+                  ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-200'
+                  : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200'
+              }`}
+              title="مفتاح تبديل الوضع المدمج لإخفاء الرسوم البيانية وعرض جداول المبيعات الكثيفة"
+            >
+              <Table2 className={`w-3.5 h-3.5 ${compactMode ? 'text-emerald-400' : 'text-slate-400'}`} />
+              <span>الوضع المدمج</span>
+              <span
+                aria-hidden="true"
+                className={`w-8 h-4 rounded-full p-0.5 transition-colors flex items-center ${
+                  compactMode ? 'bg-emerald-500 justify-start' : 'bg-slate-600 justify-end'
+                }`}
+              >
+                <span className="w-3 h-3 rounded-full bg-white shadow-sm block" />
+              </span>
+            </button>
+            {originalAdminRole === 'promoter_admin' && onSwitchRolePreview && (
+              <button
+                type="button"
+                disabled={roleSwitching}
+                onClick={async () => {
+                  setRoleSwitching(true);
+                  try {
+                    const nextRole = isPromoterAdmin ? 'user_admin' : 'promoter_admin';
+                    await onSwitchRolePreview(nextRole);
+                    showToast(
+                      nextRole === 'user_admin'
+                        ? 'تم تفعيل معاينة أدمن المستخدم (user_admin) — تم إخفاء البرومبت الهندسي بالكامل'
+                        : 'تمت العودة إلى صلاحية أدمن المروّج (promoter_admin)'
+                    );
+                  } finally {
+                    setRoleSwitching(false);
+                  }
+                }}
+                className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-[11px] font-bold flex items-center gap-1.5 transition disabled:opacity-50"
+                title="تبديل جلسة الخادم للمعاينة والتحقق من عزل الصلاحيات"
+              >
+                <UserCog className="w-3.5 h-3.5 text-amber-400" />
+                <span>{isPromoterAdmin ? 'معاينة كـ user_admin' : 'عودة لـ promoter_admin'}</span>
+              </button>
+            )}
+            {authUserEmail && (
+              <span className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 text-[11px] font-bold">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="font-mono" dir="ltr">{authUserEmail}</span>
+              </span>
+            )}
+            {onLockAdmin && (
+              <button
+                type="button"
+                onClick={onLockAdmin}
+                className="px-3 py-2 rounded-xl bg-rose-950/60 hover:bg-rose-900/70 text-rose-300 border border-rose-500/40 text-xs font-bold flex items-center gap-1.5 transition"
+                title="قفل لوحة الإدارة وتسجيل الخروج"
+              >
+                <Lock className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">خروج آمن</span>
+              </button>
+            )}
             {onOpenWhiteLabelStudio && (
               <button
                 type="button"
@@ -249,6 +519,47 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           >
             <BarChart3 className="w-4 h-4" />
             <span>التقارير والإحصائيات</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('behavior-analytics')}
+            className={`py-3 px-4 border-b-2 flex items-center gap-1.5 transition whitespace-nowrap ${
+              activeTab === 'behavior-analytics'
+                ? 'border-[#551465] text-brand-300'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <TrendingUp className="w-4 h-4 text-violet-400" />
+            <span>سلوك المستخدمين (GA4)</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('performance')}
+            className={`py-3 px-4 border-b-2 flex items-center gap-1.5 transition whitespace-nowrap ${
+              activeTab === 'performance'
+                ? 'border-[#551465] text-brand-300'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Activity className="w-4 h-4 text-emerald-400" />
+            <span>مراقبة الأداء والـ API</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('security-alerts')}
+            className={`py-3 px-4 border-b-2 flex items-center gap-1.5 transition whitespace-nowrap ${
+              activeTab === 'security-alerts'
+                ? 'border-[#551465] text-brand-300'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <BellRing className="w-4 h-4 text-rose-400" />
+            <span>الأمان والتنبيهات</span>
+            {unreadAlertsCount > 0 && (
+              <span className="bg-rose-500 text-white text-[10px] font-black px-1.5 py-0.2 rounded-full tabular-nums">
+                {unreadAlertsCount}
+              </span>
+            )}
           </button>
 
           <button
@@ -327,7 +638,67 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <Settings className="w-4 h-4" />
             <span>إعدادات المتجر</span>
           </button>
+
+          {/* Server-Driven RBAC: Omitted completely from DOM when role !== promoter_admin */}
+          {isPromoterAdmin && (
+            <button
+              onClick={() => setActiveTab('master-prompt')}
+              className={`py-3 px-4 border-b-2 flex items-center gap-1.5 transition whitespace-nowrap ${
+                activeTab === 'master-prompt'
+                  ? 'border-[#551465] text-brand-300'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <FileCode2 className="w-4 h-4 text-indigo-400" />
+              <span>البرومبت الهندسي المعتمد</span>
+            </button>
+          )}
         </div>
+
+        {/* Live Suspicious Activity Notification Strip */}
+        {unreadAlertsCount > 0 && securityBannerEnabled && activeTab !== 'security-alerts' && latestUnreadAlert && (
+          <div className="bg-rose-950/50 border-b border-rose-500/40 px-4 sm:px-6 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2 text-rose-100">
+              <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
+              <span className="font-extrabold">تنبيه أمني ({unreadAlertsCount}):</span>
+              <span className="text-rose-200 truncate max-w-xl">{latestUnreadAlert.titleAr}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveTab('security-alerts')}
+              className="px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-[11px] transition whitespace-nowrap shrink-0"
+            >
+              معاينة واستجابة سريعة
+            </button>
+          </div>
+        )}
+
+        {/* Tab: Google Analytics User Behavior & Peak Hours */}
+        {activeTab === 'behavior-analytics' && (
+          <AdminBehaviorAnalytics
+            isActive={activeTab === 'behavior-analytics'}
+            settings={settings}
+          />
+        )}
+
+        {/* Tab: API Performance, Security Adoption & Bottleneck Monitor */}
+        {activeTab === 'performance' && (
+          <AdminPerformanceMonitor isActive={activeTab === 'performance'} />
+        )}
+
+        {/* Tab: Security Center, Suspicious Activity Alerts & Admin Modifications Log */}
+        {activeTab === 'security-alerts' && (
+          <AdminSecurityAlerts
+            isActive={activeTab === 'security-alerts'}
+            isPromoterAdmin={isPromoterAdmin}
+            onAlertsUpdated={(count, latest, enabled) => {
+              setUnreadAlertsCount(count);
+              setLatestUnreadAlert(latest);
+              setSecurityBannerEnabled(enabled);
+            }}
+            onToast={showToast}
+          />
+        )}
 
         {/* Tab: Flash Offer Manager */}
         {activeTab === 'flash-offer' && flashOffer && onSaveFlashOffer && (
@@ -342,80 +713,75 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
         {/* Tab 1: Analytics & Reports */}
         {activeTab === 'analytics' && (
-          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          <div className={`flex-1 overflow-y-auto ${compactMode ? 'p-4 space-y-4' : 'p-6 space-y-6'}`}>
             {/* KPI Cards */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-1">
+            <div className={`grid grid-cols-2 lg:grid-cols-4 ${compactMode ? 'gap-2.5' : 'gap-4'}`}>
+              <div className={`bg-slate-950 border border-slate-800 ${compactMode ? 'p-3 rounded-xl space-y-0.5' : 'p-4 rounded-2xl space-y-1'}`}>
                 <div className="flex justify-between items-center text-slate-400 text-xs">
                   <span>إجمالي مبيعات المتجر</span>
                   <DollarSign className="w-4 h-4 text-emerald-400" />
                 </div>
-                <span className="text-xl font-extrabold text-white block">
+                <span className={`${compactMode ? 'text-base' : 'text-xl'} font-extrabold text-white font-mono tabular-nums block`}>
                   {totalRevenueCalc.toLocaleString()} ر.س
                 </span>
-                <span className="text-[10px] text-emerald-400 font-medium">+18.4% عن الشهر السابق</span>
+                {!compactMode && (
+                  <span className="text-[10px] text-emerald-400 font-medium">+18.4% عن الشهر السابق</span>
+                )}
               </div>
 
-              <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-1">
+              <div className={`bg-slate-950 border border-slate-800 ${compactMode ? 'p-3 rounded-xl space-y-0.5' : 'p-4 rounded-2xl space-y-1'}`}>
                 <div className="flex justify-between items-center text-slate-400 text-xs">
                   <span>إجمالي عدد الطلبات</span>
                   <ShoppingBag className="w-4 h-4 text-teal-400" />
                 </div>
-                <span className="text-xl font-extrabold text-white block">
+                <span className={`${compactMode ? 'text-base' : 'text-xl'} font-extrabold text-white font-mono tabular-nums block`}>
                   {stats.ordersCount + orders.length} طلب
                 </span>
-                <span className="text-[10px] text-teal-400 font-medium">معدل تنفيذ 98.2%</span>
+                {!compactMode && (
+                  <span className="text-[10px] text-teal-400 font-medium">معدل تنفيذ 98.2%</span>
+                )}
               </div>
 
-              <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-1">
+              <div className={`bg-slate-950 border border-slate-800 ${compactMode ? 'p-3 rounded-xl space-y-0.5' : 'p-4 rounded-2xl space-y-1'}`}>
                 <div className="flex justify-between items-center text-slate-400 text-xs">
                   <span>العملاء المسجلون</span>
                   <Users className="w-4 h-4 text-amber-400" />
                 </div>
-                <span className="text-xl font-extrabold text-white block">
+                <span className={`${compactMode ? 'text-base' : 'text-xl'} font-extrabold text-white font-mono tabular-nums block`}>
                   {stats.customersCount} عميل
                 </span>
-                <span className="text-[10px] text-amber-400 font-medium">عملاء نشطون هذا الشهر</span>
+                {!compactMode && (
+                  <span className="text-[10px] text-amber-400 font-medium">عملاء نشطون هذا الشهر</span>
+                )}
               </div>
 
-              <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-1">
+              <div className={`bg-slate-950 border border-slate-800 ${compactMode ? 'p-3 rounded-xl space-y-0.5' : 'p-4 rounded-2xl space-y-1'}`}>
                 <div className="flex justify-between items-center text-slate-400 text-xs">
                   <span>المنتجات النشطة في الكتالوج</span>
                   <Package className="w-4 h-4 text-indigo-400" />
                 </div>
-                <span className="text-xl font-extrabold text-white block">
+                <span className={`${compactMode ? 'text-base' : 'text-xl'} font-extrabold text-white font-mono tabular-nums block`}>
                   {products.length} منتج
                 </span>
-                <span className="text-[10px] text-indigo-400 font-medium">جميع المنتجات متوفرة</span>
+                {!compactMode && (
+                  <span className="text-[10px] text-indigo-400 font-medium">جميع المنتجات متوفرة</span>
+                )}
               </div>
             </div>
 
-            {/* Sales Monthly Graph Visualization */}
-            <div className="bg-slate-950 p-5 rounded-2xl border border-slate-800 space-y-3">
-              <div className="flex justify-between items-center">
-                <h4 className="text-sm font-bold text-white">رسم بياني لتطور الإيرادات والمبيعات الشهرية:</h4>
-                <span className="text-xs text-slate-400">النصف الأول من 2026</span>
-              </div>
-
-              <div className="h-44 flex items-end justify-between gap-3 pt-6 pb-2 px-2">
-                {stats.monthlyRevenue.map((m, idx) => {
-                  const maxVal = 35000;
-                  const heightPercent = Math.min(100, (m.sales / maxVal) * 100);
-                  return (
-                    <div key={idx} className="flex-1 flex flex-col items-center gap-2 h-full justify-end group">
-                      <span className="text-[10px] text-emerald-400 font-bold opacity-0 group-hover:opacity-100 transition">
-                        {m.sales.toLocaleString()} ر.س
-                      </span>
-                      <div
-                        className="w-full bg-gradient-to-t from-emerald-600 to-teal-400 rounded-t-xl transition-all duration-500 group-hover:from-emerald-500 group-hover:to-teal-300"
-                        style={{ height: `${heightPercent}%` }}
-                      />
-                      <span className="text-[11px] text-slate-400 font-medium">{m.month}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+            {/* Interactive Recharts Analytics: Daily Sales Trends, Monthly Profits & Category Breakdown */}
+            <AdminAnalyticsCharts
+              stats={stats}
+              orders={orders}
+              products={products}
+              returnRequests={returnRequests}
+              settings={settings}
+              exportedBy={authUserEmail}
+              exporterRole={adminRole}
+              onExportToast={showToast}
+              compactMode={compactMode}
+              onToggleCompactMode={handleToggleCompactMode}
+            />
           </div>
         )}
 
@@ -883,6 +1249,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     <th className="p-3">طريقة الدفع</th>
                     <th className="p-3">المبلغ الإجمالي</th>
                     <th className="p-3">حالة الطلب الحالية</th>
+                    <th className="p-3">بوليصة الشحن / QR</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
@@ -918,6 +1285,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           <option value="delivered">تم التوصيل ✅</option>
                           <option value="cancelled">ملغي ❌</option>
                         </select>
+                      </td>
+                      <td className="p-3">
+                        <button
+                          type="button"
+                          onClick={() => setWaybillOrder(order)}
+                          className="min-h-[34px] px-3 py-1.5 rounded-lg bg-[#551465]/25 hover:bg-[#551465]/45 text-brand-200 border border-[#551465]/50 font-bold text-[11px] inline-flex items-center gap-1.5 whitespace-nowrap transition"
+                        >
+                          <QrCode className="w-3.5 h-3.5 text-brand-300" />
+                          <span>إصدار بوليصة / QR</span>
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -1353,7 +1730,285 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           </div>
         )}
+
+        {/* Tab: Saved Master Engineering Prompt (Strictly Promoter Admin Only via Server Capabilities & Vault API) */}
+        {activeTab === 'master-prompt' && isPromoterAdmin && (
+          <div className="flex-1 overflow-y-auto p-6 space-y-5 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-950 p-4 rounded-2xl border border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 shrink-0">
+                  <FileCode2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-extrabold text-white flex items-center gap-2">
+                    <span>خزنة البرومبت الهندسي المعتمد</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 font-bold">
+                      AES-256-GCM Vault
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    مشفّر على الخادم ومقصور حصرياً على دور <span className="font-mono text-indigo-300">promoter_admin</span> ومخفي تماماً عن لوحة <span className="font-mono text-slate-300">user_admin</span>
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={vaultBusy}
+                  onClick={async () => {
+                    setVaultBusy(true);
+                    try {
+                      const nextEnabled = !masterPromptFeatureEnabled;
+                      const res = await fetch('/api/admin/master-prompt/feature', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ enabled: nextEnabled }),
+                      });
+                      if (res.ok) {
+                        if (onCapabilitiesChanged) await onCapabilitiesChanged();
+                        await loadMasterPromptVault();
+                        showToast(nextEnabled ? '✅ تم تفعيل ميزة البرومبت الهندسي' : '🔒 تم تعطيل عرض البرومبت الهندسي (403)');
+                      }
+                    } finally {
+                      setVaultBusy(false);
+                    }
+                  }}
+                  className={`px-3 py-2 rounded-xl border font-bold flex items-center gap-1.5 transition disabled:opacity-50 ${
+                    masterPromptFeatureEnabled
+                      ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/60'
+                      : 'bg-amber-950/60 border-amber-500/40 text-amber-300 hover:bg-amber-900/60'
+                  }`}
+                >
+                  {masterPromptFeatureEnabled ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
+                  <span>{masterPromptFeatureEnabled ? 'الميزة مفعّلة' : 'الميزة معطّلة'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={vaultBusy}
+                  onClick={async () => {
+                    setVaultBusy(true);
+                    try {
+                      const res = await fetch('/api/admin/master-prompt/rotate-key', { method: 'POST' });
+                      const data = await res.json().catch(() => ({}));
+                      if (res.ok) {
+                        await loadMasterPromptVault();
+                        showToast(`🔑 تم تدوير مفتاح التشفير إلى الإصدار v${data?.metadata?.keyVersion || ''}`);
+                      } else {
+                        showToast(data?.error || '❌ تعذر تدوير مفتاح التشفير');
+                      }
+                    } finally {
+                      setVaultBusy(false);
+                    }
+                  }}
+                  className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 font-bold flex items-center gap-1.5 transition disabled:opacity-50"
+                >
+                  <KeyRound className="w-3.5 h-3.5" />
+                  <span>تدوير المفتاح</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={vaultBusy}
+                  onClick={async () => {
+                    setVaultBusy(true);
+                    try {
+                      const res = await fetch('/api/admin/master-prompt/backup', { method: 'POST' });
+                      const data = await res.json().catch(() => ({}));
+                      if (res.ok && data.backup) {
+                        const blob = new Blob([JSON.stringify(data.backup, null, 2)], { type: 'application/json' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `rawaj-master-prompt-backup-v${data.backup.keyVersion || 1}.enc.json`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        await loadMasterPromptVault();
+                        showToast('💾 تم تصدير النسخة الاحتياطية المشفّرة والموقّعة');
+                      } else {
+                        showToast(data?.error || '❌ تعذر تصدير النسخة الاحتياطية');
+                      }
+                    } finally {
+                      setVaultBusy(false);
+                    }
+                  }}
+                  className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 font-bold flex items-center gap-1.5 transition disabled:opacity-50"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>نسخة احتياطية مشفّرة</span>
+                </button>
+
+                {onOpenMasterPrompt && canAccessMasterPrompt && (
+                  <button
+                    type="button"
+                    onClick={onOpenMasterPrompt}
+                    className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold flex items-center gap-1.5 transition"
+                  >
+                    <Eye className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>عرض مستقل</span>
+                  </button>
+                )}
+
+                {promptContent && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(promptContent);
+                      setPromptCopied(true);
+                      showToast('✅ تم نسخ البرومبت الهندسي المعتمد إلى الحافظة');
+                      setTimeout(() => setPromptCopied(false), 2000);
+                    }}
+                    className={`px-4 py-2 rounded-xl font-extrabold flex items-center gap-1.5 transition ${
+                      promptCopied
+                        ? 'bg-emerald-500 text-slate-950'
+                        : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow'
+                    }`}
+                  >
+                    {promptCopied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                    <span>{promptCopied ? 'تم النسخ!' : 'نسخ البرومبت الكامل'}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Keyring Metadata Strip */}
+            {promptMeta && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 bg-slate-950/70 p-3.5 rounded-2xl border border-slate-800 text-[11px]">
+                <div>
+                  <span className="text-slate-400 block">إصدار مفتاح التشفير (DEK)</span>
+                  <span className="font-mono font-bold text-indigo-300">v{promptMeta.keyVersion} ({promptMeta.keyId})</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">خوارزمية التشفير</span>
+                  <span className="font-mono font-bold text-emerald-300 uppercase">AES-256-GCM</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">معرّف الوصول المسجّل</span>
+                  <span className="font-mono font-bold text-slate-200">{promptMeta.accessRefId}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">التدوير الدوري القادم</span>
+                  <span className="font-mono font-bold text-amber-300">
+                    {promptMeta.nextRotationAt ? new Date(promptMeta.nextRotationAt).toLocaleDateString('ar-SA') : 'تلقائي كل 30 يوم'}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Prompt Viewer OR Safe Fallback UI */}
+            {promptLoading ? (
+              <div className="bg-slate-950 p-10 rounded-2xl border border-slate-800 flex flex-col items-center justify-center gap-3 text-slate-300">
+                <RefreshCw className="w-6 h-6 text-indigo-400 animate-spin" />
+                <p className="font-bold">جاري التحقق من الجلسة وفك التشفير من الخزنة...</p>
+              </div>
+            ) : promptError ? (
+              <div className="bg-rose-950/20 border border-rose-500/40 rounded-2xl p-6 text-center space-y-2">
+                <div className="w-12 h-12 mx-auto rounded-2xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400">
+                  <ShieldAlert className="w-6 h-6" />
+                </div>
+                <h4 className="text-sm font-extrabold text-white">
+                  {promptError.code === 'FEATURE_DISABLED'
+                    ? 'عرض البرومبت الهندسي معطّل مؤقتاً (Feature Flag OFF)'
+                    : `تم حجب الوصول (${promptError.status || 403})`}
+                </h4>
+                <p className="text-slate-300 text-xs">{promptError.message}</p>
+                {promptError.accessRefId && (
+                  <p className="text-[11px] font-mono text-rose-300">Audit Ref: {promptError.accessRefId}</p>
+                )}
+              </div>
+            ) : promptContent ? (
+              <div className="bg-slate-950 p-5 rounded-2xl border border-slate-800 shadow-inner">
+                <div className="flex items-center justify-between gap-2 text-[11px] text-emerald-400 font-bold mb-3">
+                  <span className="flex items-center gap-1.5">
+                    <Terminal className="w-4 h-4" />
+                    <span>المستند الهندسي المرجعي للنظام (مفكوك التشفير لحظياً في الجلسة)</span>
+                  </span>
+                  <span className="font-mono text-slate-400" dir="ltr">
+                    SHA256: {promptMeta?.checksumSha256?.slice(0, 16)}...
+                  </span>
+                </div>
+                <pre className="whitespace-pre-wrap font-mono text-xs sm:text-sm text-slate-200 leading-relaxed select-all">
+                  {promptContent}
+                </pre>
+              </div>
+            ) : null}
+
+            {/* Audit Log Table (Never contains raw prompt text) */}
+            <div className="bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden">
+              <div className="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
+                <div className="flex items-center gap-2 font-bold text-slate-200">
+                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                  <span>سجل التدقيق والوصول إلى البرومبت الهندسي (معرّف الوصول فقط دون أي نص خام)</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void loadMasterPromptVault()}
+                  className="text-[11px] text-indigo-300 hover:text-indigo-200 flex items-center gap-1 font-bold"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  <span>تحديث</span>
+                </button>
+              </div>
+              <div className="overflow-x-auto max-h-60">
+                <table className="w-full text-right text-[11px]">
+                  <thead className="bg-slate-900/90 text-slate-400">
+                    <tr>
+                      <th className="py-2 px-3">معرّف الوصول</th>
+                      <th className="py-2 px-3">المستخدم</th>
+                      <th className="py-2 px-3">الدور</th>
+                      <th className="py-2 px-3">العملية</th>
+                      <th className="py-2 px-3">الحالة</th>
+                      <th className="py-2 px-3">المفتاح</th>
+                      <th className="py-2 px-3">الوقت</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/70">
+                    {promptAuditLogs.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-4 text-center text-slate-500">
+                          لا توجد سجلات وصول بعد.
+                        </td>
+                      </tr>
+                    ) : (
+                      promptAuditLogs.map((log) => (
+                        <tr key={log.id} className="hover:bg-slate-900/50">
+                          <td className="py-2 px-3 font-mono text-indigo-300">{log.accessRefId}</td>
+                          <td className="py-2 px-3 font-mono text-slate-300" dir="ltr">{log.actorEmailMasked}</td>
+                          <td className="py-2 px-3 font-mono text-slate-300">{log.actorRole}</td>
+                          <td className="py-2 px-3 text-slate-200">{log.action}</td>
+                          <td className="py-2 px-3">
+                            <span
+                              className={`px-1.5 py-0.5 rounded font-bold ${
+                                log.outcome === 'granted'
+                                  ? 'bg-emerald-950/70 text-emerald-300 border border-emerald-500/30'
+                                  : 'bg-rose-950/70 text-rose-300 border border-rose-500/30'
+                              }`}
+                            >
+                              {log.outcome} ({log.httpStatus})
+                            </span>
+                          </td>
+                          <td className="py-2 px-3 font-mono text-slate-400">v{log.keyVersion}</td>
+                          <td className="py-2 px-3 font-mono text-slate-400" dir="ltr">
+                            {new Date(log.createdAt).toLocaleString('en-GB')}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
+      <ShippingWaybillModal
+        order={waybillOrder}
+        settings={settings}
+        onClose={() => setWaybillOrder(null)}
+      />
     </div>
   );
 };

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Search,
   Package,
@@ -21,6 +21,7 @@ import {
 import { Order, ReturnRequest, ReturnResolution, ReturnRequestStatus, StoreSettings } from '../../types';
 import { formatPrice } from '../../utils/currency';
 import { LazyImage } from '../LazyImage';
+import { ShippingWaybillModal } from '../ShippingWaybillModal';
 
 interface OrderTrackingPageProps {
   orders: Order[];
@@ -64,13 +65,43 @@ export const OrderTrackingPage: React.FC<OrderTrackingPageProps> = ({
     }
   };
 
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchedOrder, setSearchedOrder] = useState<Order | null>(orders[0] || null);
-  const [hasSearched, setHasSearched] = useState(false);
+  const initialOrderQuery = (() => {
+    try {
+      return new URLSearchParams(window.location.search).get('order')?.trim() || '';
+    } catch {
+      return '';
+    }
+  })();
+
+  const initialMatchedOrder = initialOrderQuery
+    ? orders.find(
+        (o) =>
+          o.orderNumber.toLowerCase() === initialOrderQuery.toLowerCase() ||
+          o.id.toLowerCase() === initialOrderQuery.toLowerCase()
+      ) || null
+    : orders[0] || null;
+
+  const [searchQuery, setSearchQuery] = useState(initialOrderQuery);
+  const [searchedOrder, setSearchedOrder] = useState<Order | null>(initialMatchedOrder);
+  const [hasSearched, setHasSearched] = useState(Boolean(initialOrderQuery));
   const [invoiceDownloadedNotice, setInvoiceDownloadedNotice] = useState(false);
+  const [isWaybillOpen, setIsWaybillOpen] = useState(false);
   const [inspectedStepIdx, setInspectedStepIdx] = useState<number>(() =>
-    orders[0] ? Math.max(0, getStatusStepIndex(orders[0].status)) : 0
+    initialMatchedOrder ? Math.max(0, getStatusStepIndex(initialMatchedOrder.status)) : 0
   );
+
+  useEffect(() => {
+    if (!initialOrderQuery) return;
+    const match = orders.find(
+      (o) =>
+        o.orderNumber.toLowerCase() === initialOrderQuery.toLowerCase() ||
+        o.id.toLowerCase() === initialOrderQuery.toLowerCase()
+    );
+    if (match) {
+      setSearchedOrder(match);
+      setInspectedStepIdx(Math.max(0, getStatusStepIndex(match.status)));
+    }
+  }, [initialOrderQuery, orders]);
 
   // Keep displayed order synced with latest updates (e.g., status changes from AdminDashboard)
   const activeOrder = searchedOrder
@@ -963,6 +994,31 @@ export const OrderTrackingPage: React.FC<OrderTrackingPageProps> = ({
                   </p>
                 )}
               </div>
+
+              {/* Shipping Waybill & Scannable QR Card */}
+              <div className="bg-slate-950 p-4 rounded-2xl border border-[#551465]/40 space-y-2.5 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-[#551465]/25 border border-[#551465]/50 flex items-center justify-center shrink-0">
+                      <QrCode className="w-5 h-5 text-brand-300" />
+                    </div>
+                    <div>
+                      <span className="font-bold text-white block">بوليصة الشحن ورمز التتبع QR</span>
+                      <span className="text-[10px] text-slate-400">
+                        بوليصة قابلة للطباعة مع باركود ورمز QR للمندوب
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsWaybillOpen(true)}
+                    className="min-h-[38px] bg-[#551465] hover:bg-brand-700 text-white font-bold px-3.5 py-2 rounded-xl text-[11px] flex items-center gap-1.5 shadow transition"
+                  >
+                    <QrCode className="w-3.5 h-3.5" />
+                    <span>عرض البوليصة و QR</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -977,6 +1033,12 @@ export const OrderTrackingPage: React.FC<OrderTrackingPageProps> = ({
           </div>
         )
       )}
+
+      <ShippingWaybillModal
+        order={isWaybillOpen ? activeOrder : null}
+        settings={settings}
+        onClose={() => setIsWaybillOpen(false)}
+      />
     </div>
   );
 };

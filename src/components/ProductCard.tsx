@@ -14,11 +14,18 @@ import {
   MessageSquare,
   ThumbsUp,
   Play,
-  Scale
+  Scale,
+  Box,
+  Bell,
+  BellRing
 } from 'lucide-react';
-import { Product, ProductReview, StoreSettings } from '../types';
+import { Product, ProductReview, PriceDropAlert, StoreSettings } from '../types';
 import { formatPrice } from '../utils/currency';
 import { LazyImage } from './LazyImage';
+import { ProductShareButton } from './ProductShareButton';
+import { getDisplayBrandName, slugifyBrandName } from '../utils/brands';
+import { getLocalizedProductName, translateCategory } from '../utils/i18n';
+import { useLanguage } from '../contexts/LanguageContext';
 
 interface ProductCardProps {
   product: Product;
@@ -30,6 +37,10 @@ interface ProductCardProps {
   isCompared?: boolean;
   onToggleCompare?: (productId: string) => void;
   onAddReview?: (productId: string, review: { userName: string; rating: number; comment: string }) => void;
+  onSelectBrand?: (brandSlug: string) => void;
+  onTryAR?: (product: Product) => void;
+  activePriceAlert?: PriceDropAlert;
+  onConfigurePriceAlert?: (product: Product) => void;
   settings?: StoreSettings;
 }
 
@@ -43,8 +54,13 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   isCompared = false,
   onToggleCompare,
   onAddReview,
+  onSelectBrand,
+  onTryAR,
+  activePriceAlert,
+  onConfigurePriceAlert,
   settings,
 }) => {
+  const { lang, isRtl, t } = useLanguage();
   const [isReviewsModalOpen, setIsReviewsModalOpen] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [newRating, setNewRating] = useState(5);
@@ -108,19 +124,58 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 
   return (
     <>
-      <div className="group bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden hover:border-[#551465]/60 transition-all duration-300 hover:shadow-xl hover:shadow-[#551465]/10 flex flex-col justify-between" dir="rtl">
+      <div className="group bg-slate-900 border border-slate-800 rounded-2xl hover:border-[#551465]/60 transition-all duration-300 hover:shadow-xl hover:shadow-[#551465]/10 flex flex-col justify-between" dir={isRtl ? 'rtl' : 'ltr'}>
         {/* Product Image Container */}
-        <div className="relative aspect-square overflow-hidden bg-slate-950">
+        <div className="relative aspect-square overflow-hidden rounded-t-2xl bg-slate-950">
           <LazyImage
             src={product.images[0]}
-            alt={product.name}
+            alt={getLocalizedProductName(product, lang)}
             sizeHint="card"
             wrapperClassName="relative w-full h-full overflow-hidden bg-slate-950"
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
           />
 
-          {/* Wishlist & Compare Buttons */}
+          {/* Wishlist, Compare & Target Price Alert Buttons */}
           <div className="absolute top-3 left-3 z-20 flex items-center gap-1.5">
+            {onConfigurePriceAlert && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onConfigurePriceAlert(product);
+                }}
+                aria-pressed={Boolean(activePriceAlert?.isActive)}
+                aria-label={
+                  activePriceAlert?.isActive
+                    ? 'تعديل التنبيه التلقائي للسعر'
+                    : 'تفعيل التنبيه التلقائي عند انخفاض السعر'
+                }
+                title={
+                  activePriceAlert?.isActive
+                    ? activePriceAlert.targetPrice
+                      ? `التنبيه التلقائي مفعّل عند ${activePriceAlert.targetPrice.toLocaleString()} ر.س`
+                      : 'التنبيه التلقائي مفعّل لأي انخفاض'
+                    : 'تنبيه تلقائي عند انخفاض السعر'
+                }
+                className={`p-2 rounded-xl backdrop-blur transition flex items-center gap-1 text-[10px] font-bold ${
+                  activePriceAlert?.isActive
+                    ? 'bg-emerald-600/95 text-white shadow border border-emerald-400/60'
+                    : 'bg-slate-900/80 hover:bg-slate-900 text-slate-300 hover:text-amber-300 border border-slate-800'
+                }`}
+              >
+                {activePriceAlert?.isActive ? (
+                  <BellRing className="w-3.5 h-3.5 text-white shrink-0" />
+                ) : (
+                  <Bell className="w-3.5 h-3.5 shrink-0" />
+                )}
+                {activePriceAlert?.isActive && activePriceAlert.targetPrice && (
+                  <span className="tabular-nums">
+                    {activePriceAlert.targetPrice.toLocaleString()}
+                  </span>
+                )}
+              </button>
+            )}
+
             {onToggleCompare && (
               <button
                 type="button"
@@ -136,24 +191,28 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                 title={isCompared ? 'إزالة من المقارنة' : 'إضافة للمقارنة'}
               >
                 <Scale className="w-3.5 h-3.5" />
-                {isCompared && <span>مقارنة</span>}
+                {isCompared && <span>{t.compare}</span>}
               </button>
             )}
 
             {onToggleWishlist && (
               <button
+                type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   onToggleWishlist(product.id);
                 }}
-                className={`p-2 rounded-xl backdrop-blur transition ${
+                aria-pressed={isWishlisted}
+                aria-label={isWishlisted ? 'إزالة من المفضلة' : 'إضافة للمفضلة'}
+                className={`px-2.5 py-1.5 rounded-xl backdrop-blur transition flex items-center gap-1 text-[10px] font-bold ${
                   isWishlisted
-                    ? 'bg-rose-500/90 text-white shadow'
-                    : 'bg-slate-900/80 hover:bg-slate-900 text-slate-300 hover:text-rose-400 border border-slate-800'
+                    ? 'bg-rose-600 text-white shadow border border-rose-400/50'
+                    : 'bg-slate-900/85 hover:bg-slate-900 text-slate-200 hover:text-rose-300 border border-slate-700/80'
                 }`}
-                title={isWishlisted ? 'إزالة من المفضلة' : 'حفظ في المفضلة'}
+                title={isWishlisted ? 'إزالة من المفضلة' : 'إضافة للمفضلة'}
               >
-                <Heart className={`w-4 h-4 ${isWishlisted ? 'fill-white' : ''}`} />
+                <Heart className={`w-3.5 h-3.5 shrink-0 ${isWishlisted ? 'fill-white' : ''}`} />
+                <span>{isWishlisted ? t.inWishlist : t.addWishlist}</span>
               </button>
             )}
           </div>
@@ -176,15 +235,15 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           <div className="absolute bottom-3 right-3 z-10">
             {product.stock > 10 ? (
               <span className="bg-slate-900/90 backdrop-blur text-brand-300 text-[10px] font-medium px-2 py-1 rounded-lg border border-[#551465]/40 flex items-center gap-1">
-                <PackageCheck className="w-3 h-3 text-brand-300" /> متوفر ({product.stock})
+                <PackageCheck className="w-3 h-3 text-brand-300" /> {t.inStockPrefix} ({product.stock})
               </span>
             ) : product.stock > 0 ? (
               <span className="bg-slate-900/90 backdrop-blur text-amber-400 text-[10px] font-medium px-2 py-1 rounded-lg border border-amber-500/30 flex items-center gap-1">
-                <AlertCircle className="w-3 h-3" /> كمية محدودة ({product.stock})
+                <AlertCircle className="w-3 h-3" /> {t.lowStockPrefix} ({product.stock})
               </span>
             ) : (
               <span className="bg-rose-950/90 text-rose-400 text-[10px] font-medium px-2 py-1 rounded-lg border border-rose-500/30">
-                نفذت الكمية
+                {t.outOfStock}
               </span>
             )}
           </div>
@@ -213,7 +272,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
               title="التفاصيل والمواصفات الكاملة والآراء"
             >
               <Eye className="w-4 h-4 text-slate-700" />
-              <span>عرض المواصفات</span>
+              <span>{t.quickView}</span>
             </button>
             
             <button
@@ -222,28 +281,55 @@ export const ProductCard: React.FC<ProductCardProps> = ({
               title="استفسار ذكي من Gemini AI"
             >
               <Sparkles className="w-4 h-4 text-brand-300" />
-              <span>تحليل AI</span>
+              <span>{t.aiAnalyze}</span>
             </button>
+
+            {onTryAR && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onTryAR(product);
+                }}
+                className="bg-slate-900/95 hover:bg-[#551465] text-white p-2.5 rounded-xl text-xs font-bold flex items-center gap-1 shadow-lg transition transform hover:scale-105 border border-brand-400/50"
+                title={isRtl ? 'معاينة الأبعاد في غرفتك بالواقع المعزز (AR)' : 'Try 3D AR in your room'}
+              >
+                <Box className="w-4 h-4 text-brand-300" />
+                <span>{t.tryAr}</span>
+              </button>
+            )}
           </div>
         </div>
 
         {/* Product Information */}
         <div className="p-4 flex-1 flex flex-col justify-between">
           <div>
-            <div className="flex items-center justify-between text-xs text-slate-400 mb-1.5">
-              <span className="text-slate-400 font-medium">{product.categoryNameAr}</span>
-              {product.brand && (
-                <span className="bg-slate-800/80 px-2 py-0.5 rounded text-[10px] text-slate-300 font-mono">
-                  {product.brand}
-                </span>
-              )}
+            <div className="flex items-center justify-between text-xs text-slate-400 mb-1.5 gap-2">
+              <span className="text-slate-400 font-medium truncate">
+                {translateCategory(product.category, lang)}
+              </span>
+              {product.brand &&
+                (onSelectBrand ? (
+                  <button
+                    type="button"
+                    onClick={() => onSelectBrand(slugifyBrandName(product.brand!))}
+                    className="bg-slate-800/80 hover:bg-[#551465] px-2 py-0.5 rounded text-[10px] text-slate-200 hover:text-white font-mono transition shrink-0"
+                    title={isRtl ? `تصفح متجر ${product.brand}` : `Visit ${product.brand} storefront`}
+                  >
+                    {getDisplayBrandName(product.brand, lang)}
+                  </button>
+                ) : (
+                  <span className="bg-slate-800/80 px-2 py-0.5 rounded text-[10px] text-slate-300 font-mono shrink-0">
+                    {getDisplayBrandName(product.brand, lang)}
+                  </span>
+                ))}
             </div>
 
             <h3 
               onClick={() => onQuickView(product)}
               className="text-sm font-bold text-slate-100 line-clamp-2 cursor-pointer hover:text-brand-300 transition mb-2"
             >
-              {product.name}
+              {getLocalizedProductName(product, lang)}
             </h3>
 
             <p className="text-xs text-slate-400 line-clamp-2 mb-3">
@@ -295,9 +381,9 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             )}
           </div>
 
-          {/* Pricing & Add to cart button */}
-          <div className="pt-3 border-t border-slate-800 flex items-center justify-between">
-            <div>
+          {/* Pricing, Share & Add to cart buttons */}
+          <div className="pt-3 border-t border-slate-800 flex items-center justify-between gap-2">
+            <div className="min-w-0">
               <div className="flex items-baseline gap-1.5 flex-wrap">
                 <span className="text-base font-extrabold text-white">
                   {formatPrice(product.price, settings?.activeCurrency, settings?.yerExchangeRate)}
@@ -308,21 +394,42 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                   </span>
                 )}
               </div>
-              <span className="text-[10px] text-slate-500 block">شامل ضريبة القيمة المضافة {settings?.vatPercentage || 15}%</span>
+              <span className="text-[10px] text-slate-500 block">{t.vatIncluded} {settings?.vatPercentage || 15}%</span>
             </div>
 
-            <button
-              onClick={() => onAddToCart(product)}
-              disabled={product.stock === 0}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition ${
-                product.stock === 0
-                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                  : 'bg-[#551465] hover:bg-brand-700 text-white shadow-md shadow-[#551465]/20 active:scale-95 border border-brand-500/30'
-              }`}
-            >
-              <ShoppingCart className="w-3.5 h-3.5 text-brand-200" />
-              <span>سلة</span>
-            </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {onTryAR && (
+                <button
+                  type="button"
+                  onClick={() => onTryAR(product)}
+                  aria-label={isRtl ? 'معاينة الأبعاد في غرفتك (AR)' : 'Try AR'}
+                  title={isRtl ? 'معاينة الأبعاد في غرفتك (AR)' : 'Try 3D AR'}
+                  className="px-2.5 py-2 rounded-xl text-[11px] font-bold flex items-center gap-1 bg-slate-800/90 hover:bg-[#551465] text-brand-200 hover:text-white border border-slate-700 hover:border-brand-400/60 transition"
+                >
+                  <Box className="w-3.5 h-3.5 text-brand-300 shrink-0" />
+                  <span>AR</span>
+                </button>
+              )}
+
+              <ProductShareButton
+                product={product}
+                settings={settings}
+                variant="card"
+              />
+
+              <button
+                onClick={() => onAddToCart(product)}
+                disabled={product.stock === 0}
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition ${
+                  product.stock === 0
+                    ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                    : 'bg-[#551465] hover:bg-brand-700 text-white shadow-md shadow-[#551465]/20 active:scale-95 border border-brand-500/30'
+                }`}
+              >
+                <ShoppingCart className="w-3.5 h-3.5 text-brand-200" />
+                <span>{t.addToCartShort}</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>

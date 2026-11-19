@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">متجر رواج</string>
+    <string name="offline_title">تعذر الاتصال بالمتجر</string>
+    <string name="offline_subtitle">يرجى التحقق من اتصال الإنترنت ثم إعادة المحاولة لتصفح متجر رواج.</string>
+    <string name="retry_button">إعادة المحاولة</string>
+    <string name="download_started">بدأ تنزيل الملف...</string>
+</resources>

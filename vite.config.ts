@@ -4,8 +4,16 @@ import path from 'path';
 import {defineConfig} from 'vite';
 import {VitePWA} from 'vite-plugin-pwa';
 
-export default defineConfig(() => {
+export default defineConfig(({ mode }) => {
+  const isProd = mode === 'production';
   return {
+    esbuild: {
+      drop: isProd ? ['console', 'debugger'] : ['debugger'],
+    },
+    build: {
+      sourcemap: false,
+      minify: 'esbuild',
+    },
     plugins: [
       react(),
       tailwindcss(),
@@ -58,11 +66,13 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
+          mode: 'production',
+          sourcemap: false,
           importScripts: ['/sw-notifications.js'],
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2,jpg}'],
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           navigateFallback: 'index.html',
-          navigateFallbackDenylist: [/^\/api\//, /^\/sitemap\.xml$/, /^\/robots\.txt$/, /^\/videos\//],
+          navigateFallbackDenylist: [/^\/api\//, /^\/\.well-known\//, /^\/sitemap\.xml$/, /^\/robots\.txt$/, /^\/videos\//],
           runtimeCaching: [
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,

@@ -15,11 +15,43 @@ import type {
   WhiteLabelUserRole,
 } from "../src/types.js";
 
-const DB_FILE = path.join("/tmp", "rawaj-whitelabel-db.json");
-const MASTER_KEY = crypto
-  .createHash("sha256")
-  .update(process.env.WHITELABEL_KMS_KEY || "rawaj-whitelabel-kms-aes256-2026")
-  .digest();
+import {
+  whiteLabelSqlQueries,
+  type WlBlobRow,
+} from "./sqliteStore.js";
+
+const LEGACY_DB_FILE = path.join("/tmp", "rawaj-whitelabel-db.json");
+const KMS_RUNTIME_KEY_FILE = path.join("/tmp", "rawaj-whitelabel-kms.key");
+
+function resolveWhiteLabelMasterKey(): Buffer {
+  const envKey = process.env.WHITELABEL_KMS_KEY?.trim();
+  if (envKey && envKey !== "MY_WHITELABEL_KMS_KEY") {
+    return crypto.createHash("sha256").update(envKey).digest();
+  }
+  try {
+    if (fs.existsSync(KMS_RUNTIME_KEY_FILE)) {
+      const hex = fs.readFileSync(KMS_RUNTIME_KEY_FILE, "utf8").trim();
+      if (/^[0-9a-f]{64}$/i.test(hex)) {
+        return Buffer.from(hex, "hex");
+      }
+    }
+    const generated = crypto.randomBytes(32);
+    fs.writeFileSync(KMS_RUNTIME_KEY_FILE, generated.toString("hex"), {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+    // Reset stale encrypted DB under any prior ephemeral key so seeded assets decrypt cleanly
+    whiteLabelSqlQueries.resetAll();
+    if (fs.existsSync(LEGACY_DB_FILE)) {
+      fs.unlinkSync(LEGACY_DB_FILE);
+    }
+    return generated;
+  } catch {
+    return crypto.randomBytes(32);
+  }
+}
+
+const MASTER_KEY = resolveWhiteLabelMasterKey();
 
 const PLAN_QUOTAS: Record<WhiteLabelPlanTier, number> = {
   starter: 25 * 1024 * 1024,
@@ -37,29 +69,6 @@ const IMMUTABLE_BOUNDARIES: WhiteLabelLockedBoundaries = {
   vatRateLockedPercent: 15,
 };
 
-interface EncryptedBlob {
-  ivHex: string;
-  tagHex: string;
-  cipherHex: string;
-  mimeType: string;
-  etag: string;
-}
-
-interface StoredSnapshotPayload {
-  meta: WhiteLabelBackupSnapshot;
-  tenantSnapshot: Omit<WhiteLabelTenant, "backups" | "builds">;
-}
-
-interface WhiteLabelDB {
-  tenants: Record<string, WhiteLabelTenant>;
-  blobs: Record<string, EncryptedBlob>;
-  snapshots: Record<string, StoredSnapshotPayload>;
-  logs: WhiteLabelAuditLog[];
-  cdnRequestsTotal: number;
-  cdnCacheHits: number;
-  errorEventsCount: number;
-}
-
 function encryptBuffer(plain: Buffer): { ivHex: string; tagHex: string; cipherHex: string } {
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", MASTER_KEY, iv);
@@ -72,15 +81,15 @@ function encryptBuffer(plain: Buffer): { ivHex: string; tagHex: string; cipherHe
   };
 }
 
-function decryptBuffer(blob: EncryptedBlob): Buffer {
+function decryptBuffer(blob: Pick<WlBlobRow, "iv_hex" | "tag_hex" | "cipher_hex">): Buffer {
   const decipher = crypto.createDecipheriv(
     "aes-256-gcm",
     MASTER_KEY,
-    Buffer.from(blob.ivHex, "hex")
+    Buffer.from(blob.iv_hex, "hex")
   );
-  decipher.setAuthTag(Buffer.from(blob.tagHex, "hex"));
+  decipher.setAuthTag(Buffer.from(blob.tag_hex, "hex"));
   return Buffer.concat([
-    decipher.update(Buffer.from(blob.cipherHex, "hex")),
+    decipher.update(Buffer.from(blob.cipher_hex, "hex")),
     decipher.final(),
   ]);
 }
@@ -102,7 +111,6 @@ function createBrandedSvgBuffer(letter: string, bg: string, fg: string): Buffer 
 }
 
 function buildSeededAsset(
-  db: WhiteLabelDB,
   tenantId: string,
   kind: WhiteLabelAssetKind,
   fileName: string,
@@ -112,11 +120,15 @@ function buildSeededAsset(
   const sha256 = crypto.createHash("sha256").update(svgBuf).digest("hex");
   const etag = `"${sha256.slice(0, 16)}"`;
   const enc = encryptBuffer(svgBuf);
-  db.blobs[assetId] = {
-    ...enc,
-    mimeType: "image/svg+xml",
+  whiteLabelSqlQueries.upsertBlob({
+    asset_id: assetId,
+    tenant_id: tenantId,
+    iv_hex: enc.ivHex,
+    tag_hex: enc.tagHex,
+    cipher_hex: enc.cipherHex,
+    mime_type: "image/svg+xml",
     etag,
-  };
+  });
   return {
     id: assetId,
     kind,
@@ -135,33 +147,24 @@ function buildSeededAsset(
   };
 }
 
-function createInitialDB(): WhiteLabelDB {
-  const db: WhiteLabelDB = {
-    tenants: {},
-    blobs: {},
-    snapshots: {},
-    logs: [],
-    cdnRequestsTotal: 1420,
-    cdnCacheHits: 1384,
-    errorEventsCount: 0,
-  };
+function seedInitialDatabase(): void {
+  whiteLabelSqlQueries.initMetric("cdn_requests_total", 1420);
+  whiteLabelSqlQueries.initMetric("cdn_cache_hits", 1384);
+  whiteLabelSqlQueries.initMetric("error_events_count", 0);
 
   const rawajIcon = buildSeededAsset(
-    db,
     "tenant-rawaj",
     "app_icon",
     "rawaj-icon.svg",
     createBrandedSvgBuffer("ر", "#551465", "#ffffff")
   );
   const nokhbaIcon = buildSeededAsset(
-    db,
     "tenant-nokhba",
     "app_icon",
     "nokhba-icon.svg",
     createBrandedSvgBuffer("ن", "#0f766e", "#ffffff")
   );
   const ofoqIcon = buildSeededAsset(
-    db,
     "tenant-ofoq",
     "app_icon",
     "ofoq-icon.svg",
@@ -303,12 +306,6 @@ function createInitialDB(): WhiteLabelDB {
     version: 1,
   };
 
-  db.tenants = {
-    [tenantRawaj.id]: tenantRawaj,
-    [tenantNokhba.id]: tenantNokhba,
-    [tenantOfoq.id]: tenantOfoq,
-  };
-
   // Seed initial verified backup snapshot for tenant-rawaj
   const snapId = "bkp-rawaj-init";
   const tenantSnapshot = {
@@ -339,72 +336,92 @@ function createInitialDB(): WhiteLabelDB {
     appName: tenantRawaj.appName,
     primaryColor: tenantRawaj.theme.primary,
   };
-  db.snapshots[snapId] = { meta: snapMeta, tenantSnapshot };
   tenantRawaj.backups.push(snapMeta);
 
-  db.logs.push(
-    {
-      id: "log-init-1",
-      tenantId: "tenant-rawaj",
-      level: "info",
-      action: "TENANT_PROVISIONED",
-      actorRole: "owner",
-      details: "تهيئة مساحة المستأجر متعدد المستأجرين وتشفير الأصول بـ AES-256-GCM",
-      statusCode: 201,
-      timestamp: now,
-    },
-    {
-      id: "log-init-2",
-      tenantId: "tenant-rawaj",
-      level: "info",
-      action: "BUILD_SIGNED",
-      actorRole: "owner",
-      details: "توقيع حزمة Android AAB v2.4.0 ببصمة RSA-4096 بنجاح",
-      statusCode: 200,
-      timestamp: now,
-    }
-  );
+  whiteLabelSqlQueries.upsertTenantJson(tenantRawaj.id, JSON.stringify(tenantRawaj), tenantRawaj.updatedAt);
+  whiteLabelSqlQueries.upsertTenantJson(tenantNokhba.id, JSON.stringify(tenantNokhba), tenantNokhba.updatedAt);
+  whiteLabelSqlQueries.upsertTenantJson(tenantOfoq.id, JSON.stringify(tenantOfoq), tenantOfoq.updatedAt);
 
-  return db;
+  whiteLabelSqlQueries.insertSnapshot({
+    backup_id: snapId,
+    tenant_id: tenantRawaj.id,
+    meta_json: JSON.stringify(snapMeta),
+    tenant_snapshot_json: snapJson,
+    created_at: now,
+  });
+
+  whiteLabelSqlQueries.insertLog({
+    id: "log-init-1",
+    tenant_id: "tenant-rawaj",
+    level: "info",
+    action: "TENANT_PROVISIONED",
+    actor_role: "owner",
+    details: "تهيئة مساحة المستأجر متعدد المستأجرين وتشفير الأصول بـ AES-256-GCM",
+    status_code: 201,
+    timestamp: now,
+  });
+  whiteLabelSqlQueries.insertLog({
+    id: "log-init-2",
+    tenant_id: "tenant-rawaj",
+    level: "info",
+    action: "BUILD_SIGNED",
+    actor_role: "owner",
+    details: "توقيع حزمة Android AAB v2.4.0 ببصمة RSA-4096 بنجاح",
+    status_code: 200,
+    timestamp: now,
+  });
 }
 
-function loadDB(): WhiteLabelDB {
+function ensureSeededDB(): void {
+  if (whiteLabelSqlQueries.countTenants() === 0) {
+    seedInitialDatabase();
+  }
+}
+
+function queryTenantById(tenantId: string): WhiteLabelTenant | null {
+  ensureSeededDB();
+  const raw = whiteLabelSqlQueries.getTenantJsonById(tenantId);
+  if (!raw) return null;
   try {
-    if (fs.existsSync(DB_FILE)) {
-      const raw = fs.readFileSync(DB_FILE, "utf8");
-      const parsed = JSON.parse(raw) as WhiteLabelDB;
-      if (parsed && parsed.tenants && parsed.blobs) {
-        return parsed;
+    return JSON.parse(raw) as WhiteLabelTenant;
+  } catch {
+    return null;
+  }
+}
+
+function saveTenantRecord(tenant: WhiteLabelTenant): void {
+  whiteLabelSqlQueries.upsertTenantJson(tenant.id, JSON.stringify(tenant), tenant.updatedAt);
+}
+
+function listTenantRecords(): WhiteLabelTenant[] {
+  ensureSeededDB();
+  return whiteLabelSqlQueries
+    .listTenantsJson()
+    .map((raw) => {
+      try {
+        return JSON.parse(raw) as WhiteLabelTenant;
+      } catch {
+        return null;
       }
-    }
-  } catch {
-    // Fallback to initial seeded DB
-  }
-  const initial = createInitialDB();
-  saveDB(initial);
-  return initial;
-}
-
-function saveDB(db: WhiteLabelDB): void {
-  try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(db), "utf8");
-  } catch {
-    // Ignore disk write issues in read-only runtimes; in-memory state stays active
-  }
+    })
+    .filter((t): t is WhiteLabelTenant => t !== null);
 }
 
 function appendLog(
-  db: WhiteLabelDB,
   entry: Omit<WhiteLabelAuditLog, "id" | "timestamp">
 ): void {
-  const fullEntry: WhiteLabelAuditLog = {
-    id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+  whiteLabelSqlQueries.insertLog({
+    id: `log-${Date.now()}-${crypto.randomBytes(2).toString("hex")}`,
+    tenant_id: entry.tenantId,
+    level: entry.level,
+    action: entry.action,
+    actor_role: entry.actorRole,
+    details: entry.details,
+    status_code: entry.statusCode,
     timestamp: new Date().toISOString(),
-    ...entry,
-  };
-  db.logs = [fullEntry, ...db.logs].slice(0, 80);
+  });
   if (entry.level === "error" || entry.level === "security") {
-    db.errorEventsCount += 1;
+    whiteLabelSqlQueries.incrementMetric("error_events_count", 1);
   }
 }
 
@@ -419,8 +436,8 @@ function getActorRole(req: Request): WhiteLabelUserRole {
 function requireWriteRole(req: Request, res: Response, next: NextFunction) {
   const role = getActorRole(req);
   if (role === "viewer") {
-    const db = loadDB();
-    appendLog(db, {
+    ensureSeededDB();
+    appendLog({
       tenantId: req.params.tenantId || "system",
       level: "security",
       action: "RBAC_WRITE_DENIED",
@@ -428,7 +445,6 @@ function requireWriteRole(req: Request, res: Response, next: NextFunction) {
       details: `محاولة تعديل غير مصرح بها من دور قراءة فقط على ${req.path}`,
       statusCode: 403,
     });
-    saveDB(db);
     return res.status(403).json({
       error: "صلاحياتك الحالية (مشاهد فقط - Viewer) لا تسمح بتعديل إعدادات العلامة أو رفع الأصول.",
       code: "RBAC_FORBIDDEN",
@@ -472,7 +488,7 @@ function detectMagicMime(buf: Buffer, declaredMime: string): { valid: boolean; d
     if (!looksLikeSvg) {
       return { valid: false, detectedMime: "invalid-svg", reason: "المحتوى لا يطابق بنية ملف SVG صالحة." };
     }
-    const xssPattern = /<script|javascript:|on\w+\s*=|<foreignObject|<iframe|<object|<embed/i;
+    const xssPattern = /<script|javascript:|on\w+\s*=|<foreignObject|<iframe|<object|<embed|<use\b|xlink:href\s*=|data:text\/html/i;
     if (xssPattern.test(text)) {
       return {
         valid: false,
@@ -488,6 +504,24 @@ function detectMagicMime(buf: Buffer, declaredMime: string): { valid: boolean; d
     detectedMime: "mismatch",
     reason: "التوقيع الثنائي للملف (Magic Bytes) لا يطابق صيغة صورة آمنة (PNG/JPEG/WebP/SVG).",
   };
+}
+
+const SAFE_ID_PATTERN = /^[a-zA-Z0-9_\-]{1,64}$/;
+const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
+const BUNDLE_ID_PATTERN = /^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z0-9_]+){1,6}$/;
+const SEMVER_PATTERN = /^\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+
+function isSafeWlId(val: unknown): val is string {
+  return typeof val === "string" && SAFE_ID_PATTERN.test(val);
+}
+
+function cleanWlText(val: unknown, maxLen: number): string {
+  if (typeof val !== "string") return "";
+  return val.replace(/[\u0000-\u001F\u007F]/g, " ").trim().slice(0, maxLen);
+}
+
+function isPlainRecord(val: unknown): val is Record<string, unknown> {
+  return typeof val === "object" && val !== null && !Array.isArray(val);
 }
 
 function getRelativeLuminanceServer(hex: string): number {
@@ -507,22 +541,47 @@ function getContrastRatioServer(hex1: string, hex2: string): number {
   return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
 }
 
-export function createWhiteLabelRouter(): express.Router {
+export function createWhiteLabelRouter(requireAdmin: express.RequestHandler): express.Router {
   const router = express.Router();
   router.use(express.json({ limit: "8mb" }));
 
-  // 1. List all tenants
-  router.get("/tenants", (_req, res) => {
-    const db = loadDB();
+  // Validate tenantId, assetId, buildId, backupId route params globally
+  router.param("tenantId", (req, res, next, val) => {
+    if (!isSafeWlId(val)) {
+      return res.status(400).json({ error: "معرف المستأجر غير صالح." });
+    }
+    next();
+  });
+  router.param("assetId", (req, res, next, val) => {
+    if (!isSafeWlId(val)) {
+      return res.status(400).json({ error: "معرف الأصل غير صالح." });
+    }
+    next();
+  });
+  router.param("buildId", (req, res, next, val) => {
+    if (!isSafeWlId(val)) {
+      return res.status(400).json({ error: "معرف الإصدار غير صالح." });
+    }
+    next();
+  });
+  router.param("backupId", (req, res, next, val) => {
+    if (!isSafeWlId(val)) {
+      return res.status(400).json({ error: "معرف النسخة الاحتياطية غير صالح." });
+    }
+    next();
+  });
+
+  // 1. List all tenants (Admin Only)
+  router.get("/tenants", requireAdmin, (_req, res) => {
     res.json({
-      tenants: Object.values(db.tenants),
+      tenants: listTenantRecords(),
       immutableBoundaries: IMMUTABLE_BOUNDARIES,
     });
   });
 
-  // 2. Create a new multi-tenant workspace
-  router.post("/tenants", requireWriteRole, (req, res) => {
-    const db = loadDB();
+  // 2. Create a new multi-tenant workspace (Admin Only)
+  router.post("/tenants", requireAdmin, requireWriteRole, (req, res) => {
+    ensureSeededDB();
     const role = getActorRole(req);
     const {
       appName,
@@ -533,35 +592,50 @@ export function createWhiteLabelRouter(): express.Router {
       primaryColor = "#551465",
     } = req.body || {};
 
-    if (!appName || String(appName).trim().length < 2) {
+    const cleanAppName = cleanWlText(appName, 40);
+    if (cleanAppName.length < 2) {
       return res.status(400).json({ error: "اسم التطبيق مطلوب (حرفان على الأقل)." });
+    }
+
+    const cleanPrimaryColor =
+      typeof primaryColor === "string" ? primaryColor.trim() : "#551465";
+    if (!HEX_COLOR_PATTERN.test(cleanPrimaryColor)) {
+      return res.status(400).json({ error: "صيغة اللون الأساسي (Hex) غير صالحة." });
+    }
+
+    if (bundleId !== undefined && (typeof bundleId !== "string" || !BUNDLE_ID_PATTERN.test(bundleId.trim()))) {
+      return res.status(400).json({ error: "معرف الحزمة (Bundle ID) غير صالح." });
     }
 
     const validPlan: WhiteLabelPlanTier =
       plan === "growth" || plan === "enterprise" ? plan : "starter";
     const id = `tenant-${Date.now().toString(36)}`;
+    const cleanAppNameEn = cleanWlText(appNameEn, 40);
     const slug =
-      String(appNameEn || appName)
+      (cleanAppNameEn || cleanAppName)
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/(^-|-$)/g, "") || id;
 
-    const svgBuf = createBrandedSvgBuffer(String(appName).trim(), primaryColor, "#ffffff");
-    const iconAsset = buildSeededAsset(db, id, "app_icon", `${slug}-icon.svg`, svgBuf);
+    const svgBuf = createBrandedSvgBuffer(cleanAppName, cleanPrimaryColor, "#ffffff");
+    const iconAsset = buildSeededAsset(id, "app_icon", `${slug}-icon.svg`, svgBuf);
     const now = new Date().toISOString();
 
     const tenant: WhiteLabelTenant = {
       id,
       slug,
-      appName: String(appName).trim().slice(0, 40),
-      appNameEn: String(appNameEn || slug).trim().slice(0, 40),
-      tagline: String(tagline || "تطبيق تجاري مخصص بهويتك").trim().slice(0, 80),
-      bundleId: String(bundleId || `com.rawaj.${slug.replace(/-/g, "")}`).slice(0, 64),
+      appName: cleanAppName,
+      appNameEn: cleanAppNameEn || slug,
+      tagline: cleanWlText(tagline, 80) || "تطبيق تجاري مخصص بهويتك",
+      bundleId:
+        typeof bundleId === "string" && bundleId.trim()
+          ? bundleId.trim().slice(0, 64)
+          : `com.rawaj.${slug.replace(/-/g, "")}`.slice(0, 64),
       plan: validPlan,
       storageUsedBytes: iconAsset.sizeBytes,
       storageQuotaBytes: PLAN_QUOTAS[validPlan],
       theme: {
-        primary: primaryColor,
+        primary: cleanPrimaryColor,
         secondary: "#0f172a",
         accent: "#d97706",
         surface: "#020617",
@@ -570,11 +644,11 @@ export function createWhiteLabelRouter(): express.Router {
       },
       splash: {
         enabled: true,
-        headline: String(appName).trim(),
+        headline: cleanAppName,
         subheadline: "جاري تحميل متجرك...",
         backgroundColor: "#0f172a",
         textColor: "#ffffff",
-        spinnerColor: primaryColor,
+        spinnerColor: cleanPrimaryColor,
         durationMs: 1800,
         showPoweredByLegal: true,
       },
@@ -587,8 +661,8 @@ export function createWhiteLabelRouter(): express.Router {
       version: 1,
     };
 
-    db.tenants[id] = tenant;
-    appendLog(db, {
+    saveTenantRecord(tenant);
+    appendLog({
       tenantId: id,
       level: "info",
       action: "TENANT_CREATED",
@@ -596,25 +670,22 @@ export function createWhiteLabelRouter(): express.Router {
       details: `إنشاء مساحة مستأجر جديدة (${tenant.appName}) على خطة ${validPlan}`,
       statusCode: 201,
     });
-    saveDB(db);
     res.status(201).json({ tenant });
   });
 
-  // 3. Get single tenant
-  router.get("/tenants/:tenantId", (req, res) => {
-    const db = loadDB();
-    const tenant = db.tenants[req.params.tenantId];
+  // 3. Get single tenant (Admin Only)
+  router.get("/tenants/:tenantId", requireAdmin, (req, res) => {
+    const tenant = queryTenantById(req.params.tenantId);
     if (!tenant) {
       return res.status(404).json({ error: "المستأجر غير موجود." });
     }
     res.json({ tenant });
   });
 
-  // 4. Update branding & enforce locked boundaries + WCAG contrast
-  router.put("/tenants/:tenantId", requireWriteRole, (req, res) => {
-    const db = loadDB();
+  // 4. Update branding & enforce locked boundaries + WCAG contrast (Admin Only)
+  router.put("/tenants/:tenantId", requireAdmin, requireWriteRole, (req, res) => {
     const role = getActorRole(req);
-    const tenant = db.tenants[req.params.tenantId];
+    const tenant = queryTenantById(req.params.tenantId);
     if (!tenant) {
       return res.status(404).json({ error: "المستأجر غير موجود." });
     }
@@ -631,7 +702,7 @@ export function createWhiteLabelRouter(): express.Router {
         attempted.legalPagesLocked === false;
 
       if (tampered) {
-        appendLog(db, {
+        appendLog({
           tenantId: tenant.id,
           level: "security",
           action: "LOCKED_BOUNDARY_TAMPER_BLOCKED",
@@ -639,7 +710,6 @@ export function createWhiteLabelRouter(): express.Router {
           details: "تم إحباط محاولة تعديل العناصر القانونية أو بوابات الدفع المقفلة.",
           statusCode: 403,
         });
-        saveDB(db);
         return res.status(403).json({
           error: "مرفوض: لا يمكن تعديل العناصر القانونية (VAT/CR/السياسات) أو تعطيل بوابات الدفع المعتمدة.",
           code: "IMMUTABLE_BOUNDARY_VIOLATION",
@@ -647,8 +717,58 @@ export function createWhiteLabelRouter(): express.Router {
       }
     }
 
-    const nextTheme = { ...tenant.theme, ...(body.theme || {}) };
-    const nextSplash = { ...tenant.splash, ...(body.splash || {}) };
+    const themePatch = isPlainRecord(body.theme) ? body.theme : {};
+    const splashPatch = isPlainRecord(body.splash) ? body.splash : {};
+
+    const nextTheme = {
+      primary: HEX_COLOR_PATTERN.test(String(themePatch.primary || ""))
+        ? String(themePatch.primary)
+        : tenant.theme.primary,
+      secondary: HEX_COLOR_PATTERN.test(String(themePatch.secondary || ""))
+        ? String(themePatch.secondary)
+        : tenant.theme.secondary,
+      accent: HEX_COLOR_PATTERN.test(String(themePatch.accent || ""))
+        ? String(themePatch.accent)
+        : tenant.theme.accent,
+      surface: HEX_COLOR_PATTERN.test(String(themePatch.surface || ""))
+        ? String(themePatch.surface)
+        : tenant.theme.surface,
+      textOnPrimary: HEX_COLOR_PATTERN.test(String(themePatch.textOnPrimary || ""))
+        ? String(themePatch.textOnPrimary)
+        : tenant.theme.textOnPrimary,
+      textOnSurface: HEX_COLOR_PATTERN.test(String(themePatch.textOnSurface || ""))
+        ? String(themePatch.textOnSurface)
+        : tenant.theme.textOnSurface,
+    };
+
+    const nextSplash = {
+      enabled:
+        typeof splashPatch.enabled === "boolean"
+          ? splashPatch.enabled
+          : tenant.splash.enabled,
+      headline:
+        cleanWlText(splashPatch.headline, 60) || tenant.splash.headline,
+      subheadline:
+        splashPatch.subheadline !== undefined
+          ? cleanWlText(splashPatch.subheadline, 100)
+          : tenant.splash.subheadline,
+      backgroundColor: HEX_COLOR_PATTERN.test(String(splashPatch.backgroundColor || ""))
+        ? String(splashPatch.backgroundColor)
+        : tenant.splash.backgroundColor,
+      textColor: HEX_COLOR_PATTERN.test(String(splashPatch.textColor || ""))
+        ? String(splashPatch.textColor)
+        : tenant.splash.textColor,
+      spinnerColor: HEX_COLOR_PATTERN.test(String(splashPatch.spinnerColor || ""))
+        ? String(splashPatch.spinnerColor)
+        : tenant.splash.spinnerColor,
+      durationMs:
+        typeof splashPatch.durationMs === "number" &&
+        Number.isFinite(splashPatch.durationMs)
+          ? Math.min(5000, Math.max(300, Math.round(splashPatch.durationMs)))
+          : tenant.splash.durationMs,
+      showPoweredByLegal: true,
+    };
+
     const nextPlan: WhiteLabelPlanTier =
       body.plan === "starter" || body.plan === "growth" || body.plan === "enterprise"
         ? body.plan
@@ -659,7 +779,7 @@ export function createWhiteLabelRouter(): express.Router {
     const splashContrast = getContrastRatioServer(nextSplash.textColor, nextSplash.backgroundColor);
 
     if (primaryContrast < 4.5 || splashContrast < 4.5) {
-      appendLog(db, {
+      appendLog({
         tenantId: tenant.id,
         level: "warning",
         action: "WCAG_CONTRAST_REJECTED",
@@ -667,7 +787,6 @@ export function createWhiteLabelRouter(): express.Router {
         details: `رفض حفظ الألوان لانخفاض التباين (الزر: ${primaryContrast.toFixed(2)}:1، شاشة البدء: ${splashContrast.toFixed(2)}:1)`,
         statusCode: 422,
       });
-      saveDB(db);
       return res.status(422).json({
         error: "يجب أن يحقق تباين النص مع الخلفية معيار WCAG AA (>= 4.5:1) قبل الحفظ. استخدم زر التصحيح التلقائي للتباين.",
         primaryContrast: Number(primaryContrast.toFixed(2)),
@@ -675,12 +794,20 @@ export function createWhiteLabelRouter(): express.Router {
       });
     }
 
+    const nextBundleId =
+      typeof body.bundleId === "string" && BUNDLE_ID_PATTERN.test(body.bundleId.trim())
+        ? body.bundleId.trim().slice(0, 64)
+        : tenant.bundleId;
+
     const updated: WhiteLabelTenant = {
       ...tenant,
-      appName: body.appName ? String(body.appName).trim().slice(0, 40) : tenant.appName,
-      appNameEn: body.appNameEn ? String(body.appNameEn).trim().slice(0, 40) : tenant.appNameEn,
-      tagline: body.tagline !== undefined ? String(body.tagline).trim().slice(0, 80) : tenant.tagline,
-      bundleId: body.bundleId ? String(body.bundleId).trim().slice(0, 64) : tenant.bundleId,
+      appName: cleanWlText(body.appName, 40) || tenant.appName,
+      appNameEn: cleanWlText(body.appNameEn, 40) || tenant.appNameEn,
+      tagline:
+        body.tagline !== undefined
+          ? cleanWlText(body.tagline, 80)
+          : tenant.tagline,
+      bundleId: nextBundleId,
       plan: nextPlan,
       storageQuotaBytes: PLAN_QUOTAS[nextPlan],
       theme: nextTheme,
@@ -690,8 +817,8 @@ export function createWhiteLabelRouter(): express.Router {
       version: tenant.version + 1,
     };
 
-    db.tenants[tenant.id] = updated;
-    appendLog(db, {
+    saveTenantRecord(updated);
+    appendLog({
       tenantId: tenant.id,
       level: "info",
       action: "BRAND_CONFIG_UPDATED",
@@ -699,51 +826,51 @@ export function createWhiteLabelRouter(): express.Router {
       details: `تحديث إعدادات العلامة "${updated.appName}" (الإصدار v${updated.version})`,
       statusCode: 200,
     });
-    saveDB(db);
 
     res.json({ tenant: updated });
   });
 
-  // 5. Upload, scan, encrypt, and store asset under tenant quota
-  router.post("/tenants/:tenantId/assets", requireWriteRole, (req, res) => {
-    const db = loadDB();
+  // 5. Upload, scan, encrypt, and store asset under tenant quota (Admin Only)
+  router.post("/tenants/:tenantId/assets", requireAdmin, requireWriteRole, (req, res) => {
     const role = getActorRole(req);
-    const tenant = db.tenants[req.params.tenantId];
+    const tenant = queryTenantById(req.params.tenantId);
     if (!tenant) {
       return res.status(404).json({ error: "المستأجر غير موجود." });
     }
 
     const { kind, fileName, mimeType, width, height, dataUrl } = req.body || {};
-    if (!dataUrl || typeof dataUrl !== "string") {
-      return res.status(400).json({ error: "بيانات الملف مفقودة." });
+    if (!dataUrl || typeof dataUrl !== "string" || dataUrl.length > 6 * 1024 * 1024) {
+      return res.status(400).json({ error: "بيانات الملف مفقودة أو تتجاوز الحد المسموح (4MB)." });
     }
 
-    const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+    const match = dataUrl.match(/^data:(image\/(?:png|jpeg|webp|svg\+xml));base64,([A-Za-z0-9+/=]+)$/);
     if (!match) {
-      return res.status(400).json({ error: "تنسيق Data URL غير صالح." });
+      return res.status(400).json({ error: "تنسيق Data URL غير صالح أو غير مدعوم." });
     }
 
-    const declaredMime = String(mimeType || match[1]);
+    const declaredMime = typeof mimeType === "string" ? mimeType : match[1];
     const fileBuf = Buffer.from(match[2], "base64");
+    if (fileBuf.length > 4 * 1024 * 1024) {
+      return res.status(413).json({ error: "حجم الصورة يتجاوز الحد الأقصى المسموح (4MB)." });
+    }
 
     // Server-side Magic Bytes & SVG XSS security scan
     const magic = detectMagicMime(fileBuf, declaredMime);
     if (!magic.valid) {
-      appendLog(db, {
+      appendLog({
         tenantId: tenant.id,
         level: "security",
         action: "ASSET_SCAN_REJECTED",
         actorRole: role,
-        details: `${fileName || "asset"}: ${magic.reason}`,
+        details: `${cleanWlText(fileName, 40) || "asset"}: ${magic.reason}`,
         statusCode: 400,
       });
-      saveDB(db);
       return res.status(400).json({ error: magic.reason, code: "SECURITY_SCAN_FAILED" });
     }
 
     // Storage Quota Check
     if (tenant.storageUsedBytes + fileBuf.length > tenant.storageQuotaBytes) {
-      appendLog(db, {
+      appendLog({
         tenantId: tenant.id,
         level: "error",
         action: "STORAGE_QUOTA_EXCEEDED",
@@ -751,7 +878,6 @@ export function createWhiteLabelRouter(): express.Router {
         details: `تجاوز الحصة التخزينية المسموحة للخطة (${tenant.plan})`,
         statusCode: 413,
       });
-      saveDB(db);
       return res.status(413).json({
         error: "تم بلوغ الحد الأقصى للتخزين في خطتك الحالية. يرجى ترقية الخطة أو حذف أصول قديمة.",
       });
@@ -764,19 +890,36 @@ export function createWhiteLabelRouter(): express.Router {
     const etag = `"${sha256.slice(0, 16)}"`;
     const encrypted = encryptBuffer(fileBuf);
 
-    db.blobs[assetId] = {
-      ...encrypted,
-      mimeType: magic.detectedMime,
+    whiteLabelSqlQueries.upsertBlob({
+      asset_id: assetId,
+      tenant_id: tenant.id,
+      iv_hex: encrypted.ivHex,
+      tag_hex: encrypted.tagHex,
+      cipher_hex: encrypted.cipherHex,
+      mime_type: magic.detectedMime,
       etag,
-    };
+    });
+
+    const safeFileName =
+      (typeof fileName === "string"
+        ? fileName.replace(/[^a-zA-Z0-9._\-\u0600-\u06FF ]/g, "").trim().slice(0, 80)
+        : "") || `${safeKind}.png`;
+    const safeWidth =
+      typeof width === "number" && Number.isFinite(width)
+        ? Math.min(4096, Math.max(16, Math.round(width)))
+        : 512;
+    const safeHeight =
+      typeof height === "number" && Number.isFinite(height)
+        ? Math.min(4096, Math.max(16, Math.round(height)))
+        : 512;
 
     const asset: WhiteLabelAsset = {
       id: assetId,
       kind: safeKind,
-      fileName: String(fileName || `${safeKind}.png`).slice(0, 80),
+      fileName: safeFileName,
       mimeType: magic.detectedMime,
-      width: Number(width) || 512,
-      height: Number(height) || 512,
+      width: safeWidth,
+      height: safeHeight,
       sizeBytes: fileBuf.length,
       sha256,
       encrypted: true,
@@ -795,8 +938,8 @@ export function createWhiteLabelRouter(): express.Router {
       updatedAt: new Date().toISOString(),
     };
 
-    db.tenants[tenant.id] = updatedTenant;
-    appendLog(db, {
+    saveTenantRecord(updatedTenant);
+    appendLog({
       tenantId: tenant.id,
       level: "info",
       action: "ASSET_ENCRYPTED_STORED",
@@ -804,18 +947,19 @@ export function createWhiteLabelRouter(): express.Router {
       details: `رفع وفحص وتشفير ${asset.fileName} (${asset.width}x${asset.height}) بنجاح`,
       statusCode: 201,
     });
-    saveDB(db);
 
     res.status(201).json({ asset, tenant: updatedTenant });
   });
 
-  // 6. CDN-cached & decrypted asset delivery endpoint
+  // 6. CDN-cached & decrypted asset delivery endpoint (tenant-scoped parameterized SQL query)
   router.get("/cdn/:tenantId/:assetId", (req, res) => {
-    const db = loadDB();
-    db.cdnRequestsTotal += 1;
-    const blob = db.blobs[req.params.assetId];
+    ensureSeededDB();
+    whiteLabelSqlQueries.incrementMetric("cdn_requests_total", 1);
+    const blob = whiteLabelSqlQueries.getBlobForTenant(
+      req.params.tenantId,
+      req.params.assetId
+    );
     if (!blob) {
-      saveDB(db);
       return res.status(404).json({ error: "الأصل غير موجود." });
     }
 
@@ -825,31 +969,27 @@ export function createWhiteLabelRouter(): express.Router {
     res.setHeader("Content-Security-Policy", "sandbox");
 
     if (req.headers["if-none-match"] === blob.etag) {
-      db.cdnCacheHits += 1;
+      whiteLabelSqlQueries.incrementMetric("cdn_cache_hits", 1);
       res.setHeader("X-CDN-Cache", "HIT");
-      saveDB(db);
       return res.status(304).end();
     }
 
     try {
       const decrypted = decryptBuffer(blob);
-      db.cdnCacheHits += 1;
+      whiteLabelSqlQueries.incrementMetric("cdn_cache_hits", 1);
       res.setHeader("X-CDN-Cache", "HIT");
-      res.setHeader("Content-Type", blob.mimeType);
-      saveDB(db);
+      res.setHeader("Content-Type", blob.mime_type);
       return res.send(decrypted);
     } catch {
       res.setHeader("X-CDN-Cache", "MISS");
-      saveDB(db);
       return res.status(500).json({ error: "فشل فك تشفير الأصل." });
     }
   });
 
-  // 7. Trigger signed mobile/PWA package build
-  router.post("/tenants/:tenantId/builds", requireWriteRole, (req, res) => {
-    const db = loadDB();
+  // 7. Trigger signed mobile/PWA package build (Admin Only)
+  router.post("/tenants/:tenantId/builds", requireAdmin, requireWriteRole, (req, res) => {
     const role = getActorRole(req);
-    const tenant = db.tenants[req.params.tenantId];
+    const tenant = queryTenantById(req.params.tenantId);
     if (!tenant) {
       return res.status(404).json({ error: "المستأجر غير موجود." });
     }
@@ -864,9 +1004,18 @@ export function createWhiteLabelRouter(): express.Router {
     const validPlatform: WhiteLabelBuildRecord["platform"] =
       platform === "ios_ipa" || platform === "dynamic_pwa" ? platform : "android_aab";
 
+    const cleanVersion = typeof version === "string" ? version.trim() : "2.5.0";
+    if (!SEMVER_PATTERN.test(cleanVersion)) {
+      return res.status(400).json({ error: "صيغة رقم الإصدار (Version) غير صالحة (مثال: 2.5.0)." });
+    }
+    const parsedRollout = Number(rolloutPercentage);
+    const safeRollout = Number.isFinite(parsedRollout)
+      ? Math.max(5, Math.min(100, Math.round(parsedRollout)))
+      : 100;
+
     const buildNumber = (tenant.builds[0]?.buildNumber || 240) + 1;
     const buildId = `bld-${tenant.id.slice(-4)}-${buildNumber}`;
-    const signatureRaw = `${tenant.bundleId}:${version}:${buildNumber}:${validPlatform}:${tenant.theme.primary}`;
+    const signatureRaw = `${tenant.bundleId}:${cleanVersion}:${buildNumber}:${validPlatform}:${tenant.theme.primary}`;
     const signatureFingerprint = crypto
       .createHash("sha256")
       .update(signatureRaw)
@@ -891,13 +1040,13 @@ export function createWhiteLabelRouter(): express.Router {
     const record: WhiteLabelBuildRecord = {
       id: buildId,
       platform: validPlatform,
-      version: String(version).trim() || "2.5.0",
+      version: cleanVersion,
       buildNumber,
       rolloutChannel:
         rolloutChannel === "beta" || rolloutChannel === "ota_config"
           ? rolloutChannel
           : "production",
-      rolloutPercentage: Math.max(5, Math.min(100, Number(rolloutPercentage) || 100)),
+      rolloutPercentage: safeRollout,
       status: "signed_ready",
       signatureFingerprint,
       signingAlgorithm: signingAlgoMap[validPlatform],
@@ -908,7 +1057,8 @@ export function createWhiteLabelRouter(): express.Router {
 
     tenant.builds = [record, ...tenant.builds].slice(0, 12);
     tenant.updatedAt = new Date().toISOString();
-    appendLog(db, {
+    saveTenantRecord(tenant);
+    appendLog({
       tenantId: tenant.id,
       level: "info",
       action: "PACKAGE_BUILT_AND_SIGNED",
@@ -916,15 +1066,13 @@ export function createWhiteLabelRouter(): express.Router {
       details: `توليد وتوقيع حزمة ${validPlatform} v${record.version} (بصمة ${signatureFingerprint.slice(0, 14)}...)`,
       statusCode: 201,
     });
-    saveDB(db);
 
     res.status(201).json({ build: record, tenant });
   });
 
-  // 8. Download signed build manifest
-  router.get("/tenants/:tenantId/builds/:buildId/manifest", (req, res) => {
-    const db = loadDB();
-    const tenant = db.tenants[req.params.tenantId];
+  // 8. Download signed build manifest (Admin Only)
+  router.get("/tenants/:tenantId/builds/:buildId/manifest", requireAdmin, (req, res) => {
+    const tenant = queryTenantById(req.params.tenantId);
     if (!tenant) return res.status(404).json({ error: "المستأجر غير موجود." });
     const build = tenant.builds.find((b) => b.id === req.params.buildId);
     if (!build) return res.status(404).json({ error: "الإصدار غير موجود." });
@@ -942,11 +1090,10 @@ export function createWhiteLabelRouter(): express.Router {
     });
   });
 
-  // 9. Create backup snapshot
-  router.post("/tenants/:tenantId/backup", requireWriteRole, (req, res) => {
-    const db = loadDB();
+  // 9. Create backup snapshot (Admin Only)
+  router.post("/tenants/:tenantId/backup", requireAdmin, requireWriteRole, (req, res) => {
     const role = getActorRole(req);
-    const tenant = db.tenants[req.params.tenantId];
+    const tenant = queryTenantById(req.params.tenantId);
     if (!tenant) {
       return res.status(404).json({ error: "المستأجر غير موجود." });
     }
@@ -959,7 +1106,7 @@ export function createWhiteLabelRouter(): express.Router {
 
     const meta: WhiteLabelBackupSnapshot = {
       id: snapId,
-      label: String(req.body?.label || `نسخة احتياطية #${tenant.backups.length + 1}`).slice(0, 60),
+      label: cleanWlText(req.body?.label, 60) || `نسخة احتياطية #${tenant.backups.length + 1}`,
       createdAt: now,
       checksumSha256,
       sizeBytes: Buffer.byteLength(payloadStr, "utf8"),
@@ -967,9 +1114,18 @@ export function createWhiteLabelRouter(): express.Router {
       primaryColor: tenant.theme.primary,
     };
 
-    db.snapshots[snapId] = { meta, tenantSnapshot };
+    whiteLabelSqlQueries.insertSnapshot({
+      backup_id: snapId,
+      tenant_id: tenant.id,
+      meta_json: JSON.stringify(meta),
+      tenant_snapshot_json: payloadStr,
+      created_at: now,
+    });
+
     tenant.backups = [meta, ...tenant.backups].slice(0, 15);
-    appendLog(db, {
+    tenant.updatedAt = now;
+    saveTenantRecord(tenant);
+    appendLog({
       tenantId: tenant.id,
       level: "info",
       action: "BACKUP_SNAPSHOT_CREATED",
@@ -977,27 +1133,40 @@ export function createWhiteLabelRouter(): express.Router {
       details: `إنشاء نسخة احتياطية "${meta.label}" ببصمة SHA-256`,
       statusCode: 201,
     });
-    saveDB(db);
 
     res.status(201).json({ backup: meta, tenant });
   });
 
-  // 10. Restore tenant from backup snapshot
-  router.post("/tenants/:tenantId/restore/:backupId", requireWriteRole, (req, res) => {
-    const db = loadDB();
+  // 10. Restore tenant from backup snapshot (Admin Only, tenant-scoped parameterized SQL query)
+  router.post("/tenants/:tenantId/restore/:backupId", requireAdmin, requireWriteRole, (req, res) => {
     const role = getActorRole(req);
-    const tenant = db.tenants[req.params.tenantId];
+    const tenant = queryTenantById(req.params.tenantId);
     if (!tenant) {
       return res.status(404).json({ error: "المستأجر غير موجود." });
     }
 
-    const snap = db.snapshots[req.params.backupId];
-    if (!snap || snap.tenantSnapshot.id !== tenant.id) {
+    const snapRow = whiteLabelSqlQueries.getSnapshotForTenant(
+      tenant.id,
+      req.params.backupId
+    );
+    if (!snapRow) {
       return res.status(404).json({ error: "النسخة الاحتياطية غير موجودة لهذا المستأجر." });
     }
 
+    let meta: WhiteLabelBackupSnapshot;
+    let tenantSnapshot: Omit<WhiteLabelTenant, "backups" | "builds">;
+    try {
+      meta = JSON.parse(snapRow.meta_json) as WhiteLabelBackupSnapshot;
+      tenantSnapshot = JSON.parse(snapRow.tenant_snapshot_json) as Omit<
+        WhiteLabelTenant,
+        "backups" | "builds"
+      >;
+    } catch {
+      return res.status(500).json({ error: "بيانات النسخة الاحتياطية تالفة." });
+    }
+
     const restored: WhiteLabelTenant = {
-      ...snap.tenantSnapshot,
+      ...tenantSnapshot,
       builds: tenant.builds,
       backups: tenant.backups,
       lockedBoundaries: IMMUTABLE_BOUNDARIES,
@@ -1005,52 +1174,64 @@ export function createWhiteLabelRouter(): express.Router {
       version: tenant.version + 1,
     };
 
-    db.tenants[tenant.id] = restored;
-    appendLog(db, {
+    saveTenantRecord(restored);
+    appendLog({
       tenantId: tenant.id,
       level: "warning",
       action: "TENANT_RESTORED_FROM_BACKUP",
       actorRole: role,
-      details: `تم استرجاع تكوين "${restored.appName}" من النسخة ${snap.meta.label}`,
+      details: `تم استرجاع تكوين "${restored.appName}" من النسخة ${meta.label}`,
       statusCode: 200,
     });
-    saveDB(db);
 
-    res.json({ tenant: restored, restoredFrom: snap.meta });
+    res.json({ tenant: restored, restoredFrom: meta });
   });
 
-  // 11. Operational telemetry, quotas, CDN stats, and audit logs
-  router.get("/ops", (_req, res) => {
-    const db = loadDB();
-    const tenants = Object.values(db.tenants);
+  // 11. Operational telemetry, quotas, CDN stats, and audit logs (Admin Only)
+  router.get("/ops", requireAdmin, (_req, res) => {
+    const tenants = listTenantRecords();
     const totalAssetsEncrypted = tenants.reduce(
       (sum, t) => sum + (t.iconAsset ? 1 : 0) + (t.splashAsset && t.splashAsset.id !== t.iconAsset?.id ? 1 : 0),
       0
     );
     const totalStorageUsedBytes = tenants.reduce((sum, t) => sum + t.storageUsedBytes, 0);
     const totalBuilds = tenants.reduce((sum, t) => sum + t.builds.length, 0);
+    const cdnRequestsTotal = whiteLabelSqlQueries.getMetric("cdn_requests_total");
+    const cdnCacheHits = whiteLabelSqlQueries.getMetric("cdn_cache_hits");
+    const errorEventsCount = whiteLabelSqlQueries.getMetric("error_events_count");
     const ratio =
-      db.cdnRequestsTotal > 0
-        ? Number(((db.cdnCacheHits / db.cdnRequestsTotal) * 100).toFixed(1))
+      cdnRequestsTotal > 0
+        ? Number(((cdnCacheHits / cdnRequestsTotal) * 100).toFixed(1))
         : 100;
+
+    const logs: WhiteLabelAuditLog[] = whiteLabelSqlQueries.listLogs(80).map((r) => ({
+      id: r.id,
+      tenantId: r.tenant_id,
+      level: r.level as WhiteLabelAuditLog["level"],
+      action: r.action,
+      actorRole: r.actor_role as WhiteLabelUserRole,
+      details: r.details,
+      statusCode: r.status_code,
+      timestamp: r.timestamp,
+    }));
 
     const summary: WhiteLabelOpsSummary = {
       totalTenants: tenants.length,
       totalAssetsEncrypted,
       totalStorageUsedBytes,
-      cdnRequestsTotal: db.cdnRequestsTotal,
-      cdnCacheHits: db.cdnCacheHits,
+      cdnRequestsTotal,
+      cdnCacheHits,
       cdnCacheHitRatio: ratio,
       totalBuilds,
-      errorEventsCount: db.errorEventsCount,
-      logs: db.logs,
+      errorEventsCount,
+      logs,
     };
 
     res.json(summary);
   });
 
-  // 12. OpenAPI 3.1 Specification Endpoint
-  router.get("/docs", (_req, res) => {
+  // 12. OpenAPI 3.1 Specification Endpoint (Admin Only)
+  router.get("/docs", requireAdmin, (_req, res) => {
     res.json({
       openapi: "3.1.0",
       info: {

@@ -8,6 +8,7 @@ import {
   ArrowUpLeft,
   X,
   ShoppingBag,
+  Pencil
 } from 'lucide-react';
 import { InAppNotification, PriceDropAlert, Product, StoreSettings } from '../types';
 import { formatPrice } from '../utils/currency';
@@ -22,6 +23,7 @@ interface NotificationCenterPopoverProps {
   onMarkAllAsRead: () => void;
   onClearNotifications: () => void;
   onRemovePriceAlert: (productId: string) => void;
+  onEditPriceAlert?: (product: Product) => void;
   onOpenProduct: (product: Product) => void;
   onOpenCart?: () => void;
 }
@@ -35,6 +37,7 @@ export const NotificationCenterPopover: React.FC<NotificationCenterPopoverProps>
   onMarkAllAsRead,
   onClearNotifications,
   onRemovePriceAlert,
+  onEditPriceAlert,
   onOpenProduct,
   onOpenCart,
 }) => {
@@ -303,32 +306,65 @@ export const NotificationCenterPopover: React.FC<NotificationCenterPopoverProps>
                             {liveProd?.name || alert.productName}
                           </span>
                           <span className="text-[10px] text-slate-400 block tabular-nums">
-                            السعر المراقب:{' '}
+                            الحالي:{' '}
                             {formatPrice(
                               liveProd?.price ?? alert.subscribedPrice,
                               settings.activeCurrency,
                               settings.yerExchangeRate
                             )}
                             {alert.targetPrice
-                              ? ` · الهدف: ${formatPrice(
+                              ? ` · المستهدف: ${formatPrice(
                                   alert.targetPrice,
                                   settings.activeCurrency,
                                   settings.yerExchangeRate
                                 )}`
                               : ' · أي تخفيض'}
                           </span>
+                          {alert.targetPrice && liveProd && (
+                            <span
+                              className={`text-[10px] font-bold block tabular-nums ${
+                                liveProd.price <= alert.targetPrice
+                                  ? 'text-emerald-400'
+                                  : 'text-amber-300'
+                              }`}
+                            >
+                              {liveProd.price <= alert.targetPrice
+                                ? '✓ تم بلوغ السعر المستهدف'
+                                : `متبقي ${formatPrice(
+                                    liveProd.price - alert.targetPrice,
+                                    settings.activeCurrency,
+                                    settings.yerExchangeRate
+                                  )} للوصول للهدف`}
+                            </span>
+                          )}
                         </div>
                       </button>
 
-                      <button
-                        type="button"
-                        onClick={() => onRemovePriceAlert(alert.productId)}
-                        aria-label={`إلغاء تنبيه السعر لـ ${alert.productName}`}
-                        className="p-2 rounded-xl bg-slate-950 hover:bg-rose-950/50 text-slate-400 hover:text-rose-400 border border-slate-800 transition shrink-0"
-                        title="إلغاء التنبيه"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {onEditPriceAlert && liveProd && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsOpen(false);
+                              onEditPriceAlert(liveProd);
+                            }}
+                            aria-label={`تعديل السعر المستهدف لـ ${alert.productName}`}
+                            className="p-2 rounded-xl bg-slate-950 hover:bg-[#551465] text-slate-300 hover:text-white border border-slate-800 transition"
+                            title="تعديل السعر المستهدف"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => onRemovePriceAlert(alert.productId)}
+                          aria-label={`إلغاء تنبيه السعر لـ ${alert.productName}`}
+                          className="p-2 rounded-xl bg-slate-950 hover:bg-rose-950/50 text-slate-400 hover:text-rose-400 border border-slate-800 transition"
+                          title="إلغاء التنبيه"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                   );
                 })

@@ -44,6 +44,8 @@ const COMPLEMENTARY_PRODUCTS: Record<string, string[]> = {
   'prod-6': ['prod-4', 'prod-1', 'prod-3', 'prod-7'], // OLED Monitor -> Console, Laptop, Earbuds
   'prod-7': ['prod-2', 'prod-3', 'prod-1', 'prod-8'], // Coffee Maker -> Watch, Earbuds, Laptop
   'prod-8': ['prod-2', 'prod-3', 'prod-1', 'prod-7'], // Travel Luggage -> Watch, Earbuds, Laptop
+  'prod-9': ['prod-10', 'prod-6', 'prod-1', 'prod-7'], // Smart Desk -> Chair, OLED Monitor, Laptop, Coffee Maker
+  'prod-10': ['prod-9', 'prod-6', 'prod-1', 'prod-3'], // Ergonomic Chair -> Smart Desk, Monitor, Laptop, Earbuds
 };
 
 export function loadBrowsingHistory(): BrowsingHistoryEntry[] {

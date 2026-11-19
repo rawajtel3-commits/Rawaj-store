@@ -1,0 +1,169 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Hardened Global Helpers
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isVerifiedOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'telrawaj@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || (
+        isVerifiedUser() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // 3. Entity Validation Helpers (No existing()/diff() inside helpers)
+    function isValidUserPublic(data, userId) {
+      return data.keys().hasAll(['uid', 'displayName', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'displayName', 'photoUrl', 'updatedAt']) &&
+        data.uid is string && data.uid == userId && isValidId(data.uid) &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100 &&
+        (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 500)) &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidUserPrivate(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'fullName', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'fullName', 'phone', 'city', 'address', 'twoFactorEnabled', 'biometricEnabled', 'updatedAt']) &&
+        data.uid is string && data.uid == userId && isValidId(data.uid) &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 180 &&
+        data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 120 &&
+        (!('phone' in data) || (data.phone is string && data.phone.size() <= 32)) &&
+        (!('city' in data) || (data.city is string && data.city.size() <= 80)) &&
+        (!('address' in data) || (data.address is string && data.address.size() <= 300)) &&
+        (!('twoFactorEnabled' in data) || data.twoFactorEnabled is bool) &&
+        (!('biometricEnabled' in data) || data.biometricEnabled is bool) &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidWishlistItem(data, userId, productId) {
+      return data.keys().hasAll(['uid', 'productId', 'addedAt']) &&
+        data.keys().hasOnly(['uid', 'productId', 'addedAt']) &&
+        data.uid is string && data.uid == userId && isValidId(data.uid) &&
+        data.productId is string && data.productId == productId &&
+        productId.size() >= 1 && productId.size() <= 64 && productId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.addedAt is timestamp;
+    }
+
+    function isValidAdminRole(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'role', 'grantedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'role', 'grantedAt']) &&
+        data.uid is string && data.uid == userId && isValidId(data.uid) &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 180 &&
+        data.role is string && data.role in ['promoter_admin', 'user_admin', 'admin'] &&
+        data.grantedAt is timestamp;
+    }
+
+    function isValidSecurityLog(data) {
+      return data.keys().hasAll(['uid', 'eventType', 'status', 'createdAt']) &&
+        data.keys().hasOnly(['uid', 'eventType', 'status', 'deviceSummary', 'createdAt']) &&
+        data.uid is string && data.uid == request.auth.uid && isValidId(data.uid) &&
+        data.eventType in ['google_signin', 'pin_verified', 'pin_failed', 'webauthn_verified', 'signout', 'admin_access'] &&
+        data.status in ['success', 'blocked'] &&
+        (!('deviceSummary' in data) || (data.deviceSummary is string && data.deviceSummary.size() <= 160)) &&
+        data.createdAt is timestamp;
+    }
+
+    // 4. Split User Collections (Public vs Private PII) + Wishlist Subcollection (STRICT OWNER-ONLY)
+    match /users/{userId} {
+      allow read, write: if false;
+
+      match /public/{docId} {
+        allow get: if isVerifiedOwner(userId) && isValidId(userId) && isValidId(docId);
+        allow list: if isVerifiedOwner(userId);
+        allow create: if isVerifiedOwner(userId) && isValidId(userId) && isValidId(docId) &&
+          isValidUserPublic(incoming(), userId) &&
+          incoming().updatedAt == request.time;
+        allow update: if isVerifiedOwner(userId) && isValidId(userId) && isValidId(docId) &&
+          isValidUserPublic(incoming(), userId) &&
+          incoming().uid == existing().uid &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoUrl', 'updatedAt']);
+        allow delete: if false;
+      }
+
+      match /private/{docId} {
+        allow get: if isVerifiedOwner(userId) && isValidId(userId) && isValidId(docId);
+        allow list: if isVerifiedOwner(userId);
+        allow create: if isVerifiedOwner(userId) && isValidId(userId) && isValidId(docId) &&
+          isValidUserPrivate(incoming(), userId) &&
+          incoming().email == request.auth.token.email &&
+          incoming().updatedAt == request.time;
+        allow update: if isVerifiedOwner(userId) && isValidId(userId) && isValidId(docId) &&
+          isValidUserPrivate(incoming(), userId) &&
+          incoming().uid == existing().uid &&
+          incoming().email == existing().email &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'fullName', 'phone', 'city', 'address', 'twoFactorEnabled', 'biometricEnabled', 'updatedAt'
+          ]);
+        allow delete: if false;
+      }
+
+      match /wishlist/{productId} {
+        allow get: if isVerifiedOwner(userId) && isValidId(userId) && isValidId(productId);
+        allow list: if isVerifiedOwner(userId);
+        allow create: if isVerifiedOwner(userId) && isValidId(userId) && isValidId(productId) &&
+          isValidWishlistItem(incoming(), userId, productId) &&
+          incoming().addedAt == request.time;
+        allow update: if false;
+        allow delete: if isVerifiedOwner(userId) && isValidId(userId) && isValidId(productId);
+      }
+    }
+
+    // 5. Admin Registry (Owner can verify own status only; no enumeration)
+    match /admins/{userId} {
+      allow get: if isVerifiedOwner(userId) && isValidId(userId);
+      allow list: if false;
+      allow create: if isBootstrappedAdmin() && isValidId(userId) &&
+        isValidAdminRole(incoming(), userId) &&
+        incoming().grantedAt == request.time;
+      allow update: if isBootstrappedAdmin() && isValidId(userId) &&
+        isValidAdminRole(incoming(), userId) &&
+        incoming().uid == existing().uid &&
+        incoming().grantedAt == existing().grantedAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['email', 'role']);
+      allow delete: if isBootstrappedAdmin() && isValidId(userId);
+    }
+
+    // 6. Immutable Security Audit Logs (Strict Owner-Only Isolation)
+    match /security_logs/{logId} {
+      allow get: if isVerifiedUser() && isValidId(logId) && existing().uid == request.auth.uid;
+      allow list: if isVerifiedUser() && resource.data.uid == request.auth.uid;
+      allow create: if isVerifiedUser() && isValidId(logId) &&
+        isValidSecurityLog(incoming()) &&
+        incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+  }
+}

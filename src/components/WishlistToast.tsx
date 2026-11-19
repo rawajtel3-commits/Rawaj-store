@@ -38,6 +38,8 @@ export const WishlistToast: React.FC<WishlistToastProps> = ({
       {/* 1. Toast Notification Banner */}
       {toast && (
         <div 
+          role="alert"
+          aria-live="polite"
           className="fixed bottom-36 md:bottom-24 right-4 sm:right-6 z-50 max-w-md w-[calc(100vw-2rem)] bg-slate-900/95 backdrop-blur-md border border-[#551465] rounded-2xl shadow-2xl p-4 text-slate-100 transition-all duration-300 transform translate-y-0 animate-bounce-short"
           dir="rtl"
         >
@@ -62,10 +64,10 @@ export const WishlistToast: React.FC<WishlistToastProps> = ({
                 <div className="flex items-center gap-1.5">
                   <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
                     toast.action === 'added' 
-                      ? 'bg-rose-950/90 text-rose-400 border border-rose-500/30' 
-                      : 'bg-slate-800 text-slate-400'
+                      ? 'bg-rose-950/90 text-rose-300 border border-rose-500/30' 
+                      : 'bg-slate-800 text-slate-300 border border-slate-700'
                   }`}>
-                    {toast.action === 'added' ? 'تم الحفظ في المفضلة' : 'تمت الإزالة'}
+                    {toast.action === 'added' ? 'تمت الإضافة للمفضلة' : 'تم الحذف من المفضلة'}
                   </span>
                   <span className="text-[10px] text-slate-400 font-mono">
                     ({wishlistCount} عنصر بالقائمة)

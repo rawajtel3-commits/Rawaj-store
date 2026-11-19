@@ -1,0 +1,62 @@
+name: Build Rawaj Store Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      store_url:
+        description: 'Custom HTTPS Domain URL (e.g. https://store.yourdomain.com)'
+        required: true
+        default: 'https://store.yourdomain.com'
+      app_package:
+        description: 'Android Application ID / Package Name'
+        required: false
+        default: 'com.rawaj.store'
+  push:
+    paths:
+      - 'android-app/**'
+      - '.github/workflows/android-apk.yml'
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android-app
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build Debug & Release APKs
+        run: |
+          STORE_URL="${{ github.event.inputs.store_url || 'https://store.yourdomain.com' }}"
+          APP_PKG="${{ github.event.inputs.app_package || 'com.rawaj.store' }}"
+          gradle assembleDebug assembleRelease \
+            -PRAWAJ_STORE_URL="$STORE_URL" \
+            -PRAWAJ_APP_PACKAGE="$APP_PKG"
+
+      - name: Upload Debug APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rawaj-store-debug-apk
+          path: android-app/app/build/outputs/apk/debug/*.apk
+
+      - name: Upload Release (Unsigned) APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rawaj-store-release-unsigned-apk
+          path: android-app/app/build/outputs/apk/release/*.apk

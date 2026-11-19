@@ -25,7 +25,9 @@ import {
   Copy,
   Check,
   Download,
-  ChevronLeft
+  ChevronLeft,
+  Gift,
+  Award
 } from 'lucide-react';
 import { Category, PageView, Product, StoreSettings } from '../../types';
 import { formatPrice } from '../../utils/currency';
@@ -40,6 +42,7 @@ interface SitemapPageProps {
   onOpenCart: () => void;
   onOpenAIAssistant: () => void;
   onOpenSellerChat: () => void;
+  isAdminUnlocked?: boolean;
 }
 
 interface SitemapRouteItem {
@@ -63,6 +66,7 @@ export const SitemapPage: React.FC<SitemapPageProps> = ({
   onOpenCart,
   onOpenAIAssistant,
   onOpenSellerChat,
+  isAdminUnlocked = false,
 }) => {
   const [filterText, setFilterText] = useState('');
   const [xmlCopied, setXmlCopied] = useState(false);
@@ -136,6 +140,33 @@ export const SitemapPage: React.FC<SitemapPageProps> = ({
         icon: <Flame className="w-4 h-4 text-amber-400" />,
       },
       {
+        id: 'brands',
+        view: 'brands',
+        href: '/?view=brands',
+        title: 'الماركات والعلامات التجارية الرسمية',
+        description: 'تصفح متاجر العلامات التجارية المعتمدة ومنتجات كل علامة مع ضمان الوكيل.',
+        group: 'shopping',
+        icon: <Award className="w-4 h-4 text-brand-300" />,
+      },
+      {
+        id: 'amazon-sa',
+        view: 'amazon-sa',
+        href: '/?view=amazon-sa',
+        title: 'تسوق منتجات أمازون السعودية (Amazon.sa)',
+        description: 'استعرض واشترِ منتجات أمازون السعودية بأسعار محدثة ودفع محلي آمن.',
+        group: 'shopping',
+        icon: <ShoppingBag className="w-4 h-4 text-amber-400" />,
+      },
+      {
+        id: 'gift-vouchers',
+        view: 'gift-vouchers',
+        href: '/?view=gift-vouchers',
+        title: 'قسائم الهدايا الرقمية',
+        description: 'شراء قسائم هدايا رقمية وإرسالها للأصدقاء عبر البريد أو كود مخصص.',
+        group: 'shopping',
+        icon: <Gift className="w-4 h-4 text-brand-300" />,
+      },
+      {
         id: 'track-order',
         view: 'track-order',
         href: '/?view=track-order',
@@ -171,15 +202,19 @@ export const SitemapPage: React.FC<SitemapPageProps> = ({
         icon: <ShoppingBag className="w-4 h-4 text-brand-300" />,
         onAction: onOpenCart,
       },
-      {
-        id: 'white-label',
-        view: 'white-label',
-        href: '/?view=white-label',
-        title: 'منصة "تطبيق باسمك وشعارك" (White-Label)',
-        description: 'تخصيص هوية المتجر، الشعار، شاشة البدء، وبناء حزم التطبيقات.',
-        group: 'support',
-        icon: <Palette className="w-4 h-4 text-brand-300" />,
-      },
+      ...(isAdminUnlocked
+        ? [
+            {
+              id: 'white-label',
+              view: 'white-label' as PageView,
+              href: '/?view=white-label',
+              title: 'منصة "تطبيق باسمك وشعارك" (White-Label)',
+              description: 'تخصيص هوية المتجر، الشعار، شاشة البدء، وبناء حزم التطبيقات.',
+              group: 'support' as const,
+              icon: <Palette className="w-4 h-4 text-brand-300" />,
+            },
+          ]
+        : []),
       {
         id: 'ads',
         view: 'ads',

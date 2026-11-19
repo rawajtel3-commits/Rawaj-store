@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.RawajStore" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/rawaj_primary</item>
+        <item name="colorPrimaryVariant">@color/rawaj_primary_dark</item>
+        <item name="colorOnPrimary">@color/rawaj_text_primary</item>
+        <item name="colorSecondary">@color/rawaj_accent</item>
+        <item name="android:colorBackground">@color/rawaj_bg</item>
+        <item name="android:statusBarColor">@color/rawaj_primary_dark</item>
+        <item name="android:navigationBarColor">@color/rawaj_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

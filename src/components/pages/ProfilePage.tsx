@@ -20,14 +20,48 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   Heart,
+  Fingerprint,
+  ShieldCheck,
+  Trash2,
+  Lock,
+  Unlock,
+  AlertCircle,
+  Loader2,
+  UserCheck,
+  KeyRound,
+  LogOut,
+  Scale,
+  Sun,
+  Moon,
+  SlidersHorizontal,
+  LayoutDashboard,
+  Languages,
 } from 'lucide-react';
-import { LoyaltyTransaction, Order, StoreSettings, UserProfile } from '../../types';
+import { useLanguage } from '../../contexts/LanguageContext';
+import {
+  AuthUserSummary,
+  CurrencyCode,
+  LoyaltyTransaction,
+  Order,
+  ServerSessionState,
+  StoreSettings,
+  ThemeMode,
+  UserProfile,
+  WebAuthnCredentialRecord,
+  WebAuthnSecuritySettings,
+  WebAuthnSession,
+} from '../../types';
 import { formatPrice } from '../../utils/currency';
 import {
   MIN_REDEEM_POINTS,
   getLoyaltyTier,
   pointsToDiscountSar,
 } from '../../utils/loyalty';
+import {
+  WebAuthnSupportInfo,
+  detectWebAuthnSupport,
+  mapWebAuthnErrorToArabic,
+} from '../../utils/webauthn';
 
 interface ProfilePageProps {
   profile: UserProfile;
@@ -44,6 +78,25 @@ interface ProfilePageProps {
   onNavigateToHome: () => void;
   onOpenCart: () => void;
   settings: StoreSettings;
+  webAuthnCredentials: WebAuthnCredentialRecord[];
+  webAuthnSession: WebAuthnSession;
+  webAuthnSettings: WebAuthnSecuritySettings;
+  onRegisterWebAuthn: () => Promise<void>;
+  onAuthenticateWebAuthn: () => Promise<void>;
+  onLogoutWebAuthn: () => void;
+  onRemoveWebAuthnCredential: (id: string) => void;
+  onUpdateWebAuthnSettings: (next: WebAuthnSecuritySettings) => void;
+  authUser?: AuthUserSummary | null;
+  serverSession?: ServerSessionState;
+  onOpenAuth?: () => void;
+  onSignOut?: () => Promise<void>;
+  theme?: ThemeMode;
+  onToggleTheme?: () => void;
+  onChangeCurrency?: (currency: CurrencyCode) => void;
+  compareCount?: number;
+  onOpenCompare?: () => void;
+  onNavigateToWishlist?: () => void;
+  onOpenAdmin?: () => void;
 }
 
 export const ProfilePage: React.FC<ProfilePageProps> = ({
@@ -61,10 +114,85 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   onNavigateToHome,
   onOpenCart,
   settings,
+  webAuthnCredentials,
+  webAuthnSession,
+  webAuthnSettings,
+  onRegisterWebAuthn,
+  onAuthenticateWebAuthn,
+  onLogoutWebAuthn,
+  onRemoveWebAuthnCredential,
+  onUpdateWebAuthnSettings,
+  authUser = null,
+  serverSession,
+  onOpenAuth,
+  onSignOut,
+  theme = 'dark',
+  onToggleTheme,
+  onChangeCurrency,
+  compareCount = 0,
+  onOpenCompare,
+  onNavigateToWishlist,
+  onOpenAdmin,
 }) => {
+  const { lang, setLang, isRtl, t } = useLanguage();
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [draftProfile, setDraftProfile] = useState<UserProfile>(profile);
   const [profileSavedNotice, setProfileSavedNotice] = useState(false);
+
+  const [webAuthnSupport, setWebAuthnSupport] = useState<WebAuthnSupportInfo | null>(null);
+  const [biometricBusy, setBiometricBusy] = useState(false);
+  const [biometricNotice, setBiometricNotice] = useState<{
+    type: 'success' | 'error';
+    text: string;
+  } | null>(null);
+
+  React.useEffect(() => {
+    let active = true;
+    detectWebAuthnSupport().then((info) => {
+      if (active) setWebAuthnSupport(info);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const handleBiometricRegisterClick = async () => {
+    setBiometricNotice(null);
+    setBiometricBusy(true);
+    try {
+      await onRegisterWebAuthn();
+      setBiometricNotice({
+        type: 'success',
+        text: 'تم تسجيل بصمة الإصبع / الوجه وتفعيل الدخول البيومتري لحسابك بنجاح.',
+      });
+    } catch (err) {
+      setBiometricNotice({
+        type: 'error',
+        text: mapWebAuthnErrorToArabic(err),
+      });
+    } finally {
+      setBiometricBusy(false);
+    }
+  };
+
+  const handleBiometricAuthClick = async () => {
+    setBiometricNotice(null);
+    setBiometricBusy(true);
+    try {
+      await onAuthenticateWebAuthn();
+      setBiometricNotice({
+        type: 'success',
+        text: 'تم التحقق من بصمتك وتسجيل دخولك البيومتري بنجاح ✓',
+      });
+    } catch (err) {
+      setBiometricNotice({
+        type: 'error',
+        text: mapWebAuthnErrorToArabic(err),
+      });
+    } finally {
+      setBiometricBusy(false);
+    }
+  };
 
   const maxRedeemable = Math.floor(loyaltyPoints / 10) * 10;
   const [customRedeemPoints, setCustomRedeemPoints] = useState<number>(() =>
@@ -416,6 +544,192 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
         </div>
       </div>
 
+      {/* Store Preferences & Secondary Tools (Language, Currency, Theme, Compare, Wishlist) */}
+      <section className="bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 space-y-5 shadow-xl">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3.5">
+          <div>
+            <h3 className="text-base font-extrabold text-white flex items-center gap-2">
+              <SlidersHorizontal className="w-5 h-5 text-brand-300" />
+              <span>{t.preferencesTitle}</span>
+            </h3>
+            <p className="text-xs text-slate-400 mt-0.5">
+              {t.preferencesDesc}
+            </p>
+          </div>
+          {onOpenAdmin && (
+            <button
+              type="button"
+              onClick={onOpenAdmin}
+              className="min-h-[38px] px-3.5 py-2 rounded-xl bg-slate-950 hover:bg-slate-800 text-amber-300 border border-slate-700 text-xs font-bold flex items-center gap-2 transition"
+            >
+              <LayoutDashboard className="w-4 h-4" />
+              <span>{isRtl ? 'لوحة تحكم الإدارة' : 'Admin Dashboard'}</span>
+            </button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+          {/* Language & Currency Switcher */}
+          <div className="lg:col-span-5 space-y-3">
+            <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-extrabold text-white flex items-center gap-2">
+                  <Languages className="w-4 h-4 text-brand-300" />
+                  <span>{t.languageLabel}</span>
+                </span>
+                <span className="text-[11px] font-bold text-brand-300 uppercase">
+                  {lang === 'ar' ? 'RTL • AR' : 'LTR • EN'}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <button
+                  type="button"
+                  aria-pressed={lang === 'ar'}
+                  onClick={() => setLang('ar')}
+                  className={`min-h-[42px] px-3 py-2 rounded-xl font-bold border transition ${
+                    lang === 'ar'
+                      ? 'bg-[#551465] text-white border-brand-400/60 shadow-lg'
+                      : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-800'
+                  }`}
+                >
+                  🇸🇦 {t.languageArabic}
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={lang === 'en'}
+                  onClick={() => setLang('en')}
+                  className={`min-h-[42px] px-3 py-2 rounded-xl font-bold border transition ${
+                    lang === 'en'
+                      ? 'bg-[#551465] text-white border-brand-400/60 shadow-lg'
+                      : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-800'
+                  }`}
+                >
+                  🇺🇸 {t.languageEnglish}
+                </button>
+              </div>
+            </div>
+
+            {onChangeCurrency && (
+              <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-extrabold text-white flex items-center gap-2">
+                    <Coins className="w-4 h-4 text-amber-400" />
+                    <span>{isRtl ? 'عملة عرض الأسعار' : 'Display Currency'}</span>
+                  </span>
+                  <span className="text-[11px] font-bold text-brand-300 tabular-nums">
+                    {settings.activeCurrency || 'SAR'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  {(
+                    [
+                      { code: 'SAR', label: isRtl ? '🇸🇦 ريال سعودي' : '🇸🇦 SAR', short: 'ر.س' },
+                      { code: 'YER', label: isRtl ? '🇾🇪 ريال يمني' : '🇾🇪 YER', short: 'ر.ي' },
+                      { code: 'USD', label: isRtl ? '🇺🇸 دولار' : '🇺🇸 USD', short: '$' },
+                    ] as { code: CurrencyCode; label: string; short: string }[]
+                  ).map((cur) => {
+                    const selected = (settings.activeCurrency || 'SAR') === cur.code;
+                    return (
+                      <button
+                        key={cur.code}
+                        type="button"
+                        aria-pressed={selected}
+                        onClick={() => onChangeCurrency(cur.code)}
+                        className={`min-h-[44px] px-2.5 py-2 rounded-xl font-bold border transition flex flex-col items-center justify-center gap-0.5 ${
+                          selected
+                            ? 'bg-[#551465] text-white border-brand-400/60 shadow-lg'
+                            : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-800'
+                        }`}
+                      >
+                        <span className="text-[11px] whitespace-nowrap">{cur.label}</span>
+                        <span className="text-[10px] opacity-80">{cur.short}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Theme + Compare + Wishlist Quick Actions */}
+          <div className={`${onChangeCurrency ? 'lg:col-span-7' : 'lg:col-span-12'} grid grid-cols-1 sm:grid-cols-3 gap-3`}>
+            {onToggleTheme && (
+              <button
+                type="button"
+                onClick={onToggleTheme}
+                aria-pressed={theme === 'light'}
+                className="min-h-[82px] bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-2xl p-4 text-right flex flex-col justify-between gap-2 transition"
+              >
+                <div className="flex items-center justify-between w-full">
+                  <span className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center">
+                    {theme === 'dark' ? (
+                      <Sun className="w-4 h-4 text-amber-300" />
+                    ) : (
+                      <Moon className="w-4 h-4 text-brand-300" />
+                    )}
+                  </span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-300">
+                    {theme === 'dark' ? 'الوضع الداكن' : 'الوضع الفاتح'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-xs font-extrabold text-white block">مظهر المتجر</span>
+                  <span className="text-[11px] text-slate-400 block">
+                    {theme === 'dark' ? 'التبديل للوضع الفاتح' : 'التبديل للوضع الداكن'}
+                  </span>
+                </div>
+              </button>
+            )}
+
+            {onOpenCompare && (
+              <button
+                type="button"
+                onClick={onOpenCompare}
+                className="min-h-[82px] bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-2xl p-4 text-right flex flex-col justify-between gap-2 transition"
+              >
+                <div className="flex items-center justify-between w-full">
+                  <span className="w-9 h-9 rounded-xl bg-[#551465]/25 border border-brand-400/40 flex items-center justify-center">
+                    <Scale className="w-4 h-4 text-brand-300" />
+                  </span>
+                  <span className="text-xs font-black px-2 py-0.5 rounded-lg bg-[#551465]/30 text-brand-200 tabular-nums">
+                    {compareCount} / 4
+                  </span>
+                </div>
+                <div>
+                  <span className="text-xs font-extrabold text-white block">مقارنة المنتجات</span>
+                  <span className="text-[11px] text-slate-400 block">
+                    قارن المواصفات والأسعار جنباً إلى جنب
+                  </span>
+                </div>
+              </button>
+            )}
+
+            {onNavigateToWishlist && (
+              <button
+                type="button"
+                onClick={onNavigateToWishlist}
+                className="min-h-[82px] bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-2xl p-4 text-right flex flex-col justify-between gap-2 transition"
+              >
+                <div className="flex items-center justify-between w-full">
+                  <span className="w-9 h-9 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center">
+                    <Heart className="w-4 h-4 text-rose-400" />
+                  </span>
+                  <span className="text-xs font-black px-2 py-0.5 rounded-lg bg-rose-950/60 text-rose-300 tabular-nums">
+                    {wishlistCount} منتج
+                  </span>
+                </div>
+                <div>
+                  <span className="text-xs font-extrabold text-white block">قائمة المفضلة</span>
+                  <span className="text-[11px] text-slate-400 block">
+                    استعراض المنتجات المحفوظة للشراء لاحقاً
+                  </span>
+                </div>
+              </button>
+            )}
+          </div>
+        </div>
+      </section>
+
       {/* Interactive Points Redemption & History Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Redeem Points for Upcoming Orders */}
@@ -657,6 +971,307 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Biometric Security & Passkey Panel (Web Authentication API) */}
+      <section className="bg-slate-900 border border-[#551465]/45 rounded-3xl p-5 sm:p-6 space-y-5 shadow-xl">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+          <div className="flex items-start gap-3">
+            <div className="w-11 h-11 rounded-2xl bg-[#551465]/25 border border-brand-400/40 flex items-center justify-center text-brand-300 shrink-0">
+              <Fingerprint className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-base font-extrabold text-white flex items-center gap-2">
+                <span>الأمان والدخول بالبصمة أو الوجه</span>
+                <span className="text-[10px] font-mono bg-slate-950 border border-slate-700 text-brand-300 px-2 py-0.5 rounded-lg">
+                  WebAuthn API
+                </span>
+              </h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                سجّل بصمة الإصبع أو التعرف على الوجه لتسجيل الدخول السريع وتأكيد عمليات الشراء الكبيرة بأمان مشفّر على جهازك.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {onOpenAuth && (
+              <button
+                type="button"
+                onClick={onOpenAuth}
+                className="bg-slate-950 hover:bg-[#551465] text-white border border-brand-400/40 px-3 py-1.5 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition"
+              >
+                <KeyRound className="w-3.5 h-3.5 text-brand-300" />
+                <span>
+                  {authUser
+                    ? serverSession?.pinEnabled
+                      ? 'إدارة الجلسة و 2FA'
+                      : 'إعداد رمز أمان 2FA'
+                    : 'تسجيل الدخول الآمن'}
+                </span>
+              </button>
+            )}
+            {authUser && onSignOut && (
+              <button
+                type="button"
+                onClick={() => void onSignOut()}
+                className="bg-rose-950/60 hover:bg-rose-900/70 text-rose-300 border border-rose-500/40 px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>تسجيل الخروج</span>
+              </button>
+            )}
+            {webAuthnSession.authenticated ? (
+              <span className="bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 px-3 py-1.5 rounded-xl text-xs font-extrabold flex items-center gap-1.5">
+                <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                <span>جلسة موثقة بالبصمة</span>
+              </span>
+            ) : (
+              <span className="bg-slate-950 border border-slate-700 text-slate-300 px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5 text-amber-400" />
+                <span>غير متحقق بالبصمة</span>
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Federated Auth + Server HttpOnly Session Banner */}
+        <div className="bg-slate-950 border border-slate-800 rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2.5 min-w-0">
+            {authUser ? (
+              <UserCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+            ) : (
+              <Lock className="w-4 h-4 text-amber-400 shrink-0" />
+            )}
+            <div className="min-w-0">
+              <span className="font-extrabold text-white block truncate">
+                {authUser
+                  ? `حساب موثّق: ${authUser.displayName} (${authUser.email})`
+                  : 'الجلسة غير مسجلة بعد عبر بوابة الدخول الآمن'}
+              </span>
+              <span className="text-[11px] text-slate-400 block">
+                {authUser
+                  ? serverSession?.pinEnabled
+                    ? 'حماية مزدوجة نشطة: Google Auth + HttpOnly + رمز أمان ثنائي (2FA)'
+                    : 'جلسة محمية بـ HttpOnly — يُنصح بتفعيل رمز الأمان الثنائي (6 أرقام)'
+                  : 'سجّل دخولك لمزامنة المفضلة وحماية حسابك بالتحقق الثنائي وسجل النشاط الأمني.'}
+              </span>
+            </div>
+          </div>
+          {onOpenAuth && !authUser && (
+            <button
+              type="button"
+              onClick={onOpenAuth}
+              className="px-3.5 py-2 rounded-xl bg-[#551465] hover:bg-brand-700 text-white text-xs font-extrabold transition shrink-0"
+            >
+              تسجيل الدخول الآن
+            </button>
+          )}
+        </div>
+
+        {webAuthnSupport && !webAuthnSupport.supported && (
+          <div className="bg-amber-950/50 border border-amber-500/40 text-amber-200 rounded-2xl p-3.5 text-xs flex items-start gap-2.5">
+            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <span>
+              المتصفح الحالي لا يدعم واجهة Web Authentication API. جرّب فتح المتجر عبر Chrome على أندرويد أو تطبيق أندرويد المثبّت.
+            </span>
+          </div>
+        )}
+
+        {webAuthnSupport?.isEmbeddedIframe && webAuthnSupport.supported && (
+          <div className="bg-slate-950 border border-amber-500/35 text-slate-300 rounded-2xl p-3.5 text-xs flex items-start gap-2.5">
+            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <span>
+              ملاحظة: بعض المتصفحات تقيّد مستشعر البصمة داخل نوافذ المعاينة المضمّنة؛ إذا ظهر تنبيه عدم الصلاحية افتح التطبيق في نافذة مستقلة أو بعد تثبيته على أندرويد.
+            </span>
+          </div>
+        )}
+
+        {biometricNotice && (
+          <div
+            className={`rounded-2xl p-3.5 text-xs font-bold flex items-start gap-2.5 border ${
+              biometricNotice.type === 'success'
+                ? 'bg-emerald-950/55 border-emerald-500/40 text-emerald-300'
+                : 'bg-rose-950/55 border-rose-500/40 text-rose-300'
+            }`}
+          >
+            {biometricNotice.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+            ) : (
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+            )}
+            <span>{biometricNotice.text}</span>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+          {/* Left: Biometric Passkey Actions & Registered Credentials */}
+          <div className="lg:col-span-7 space-y-4">
+            <div className="flex flex-wrap gap-2.5">
+              <button
+                type="button"
+                disabled={biometricBusy}
+                onClick={handleBiometricRegisterClick}
+                className="flex-1 sm:flex-initial min-h-[42px] bg-[#551465] hover:bg-brand-700 disabled:opacity-60 text-white font-extrabold px-4 py-2.5 rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg transition"
+              >
+                {biometricBusy ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Fingerprint className="w-4 h-4 text-brand-200" />
+                )}
+                <span>تسجيل بصمة الإصبع أو الوجه (Passkey)</span>
+              </button>
+
+              {webAuthnCredentials.length > 0 && !webAuthnSession.authenticated && (
+                <button
+                  type="button"
+                  disabled={biometricBusy}
+                  onClick={handleBiometricAuthClick}
+                  className="flex-1 sm:flex-initial min-h-[42px] bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-extrabold px-4 py-2.5 rounded-xl text-xs flex items-center justify-center gap-2 shadow transition"
+                >
+                  <Unlock className="w-4 h-4" />
+                  <span>تسجيل الدخول الآن بالبصمة / الوجه</span>
+                </button>
+              )}
+
+              {webAuthnSession.authenticated && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onLogoutWebAuthn();
+                    setBiometricNotice({
+                      type: 'success',
+                      text: 'تم قفل الجلسة البيومترية بنجاح.',
+                    });
+                  }}
+                  className="min-h-[42px] bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold px-4 py-2.5 rounded-xl text-xs flex items-center justify-center gap-2 transition"
+                >
+                  <Lock className="w-4 h-4 text-amber-400" />
+                  <span>قفل الجلسة</span>
+                </button>
+              )}
+            </div>
+
+            <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 space-y-2.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-extrabold text-white">الأجهزة والمفاتيح البيومترية المسجلة</span>
+                <span className="text-[11px] text-slate-400 tabular-nums">
+                  {webAuthnCredentials.length} مسجل
+                </span>
+              </div>
+
+              {webAuthnCredentials.length === 0 ? (
+                <p className="text-xs text-slate-500 py-3">
+                  لم يتم تسجيل أي بصمة أو وجه بعد. اضغط على «تسجيل بصمة الإصبع أو الوجه» لحماية حسابك ومدفوعاتك.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {webAuthnCredentials.map((cred) => (
+                    <div
+                      key={cred.id}
+                      className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex items-center justify-between gap-3"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-9 h-9 rounded-xl bg-[#551465]/25 border border-brand-400/30 flex items-center justify-center text-brand-300 shrink-0">
+                          <Fingerprint className="w-4 h-4" />
+                        </div>
+                        <div className="min-w-0">
+                          <span className="text-xs font-bold text-white block truncate">
+                            {cred.label}
+                          </span>
+                          <span className="text-[10px] text-slate-400 block truncate">
+                            {cred.userName} • أُنشئ{' '}
+                            {new Date(cred.createdAt).toLocaleDateString('ar-SA')}
+                            {cred.lastVerifiedAt
+                              ? ` • آخر تحقق ${new Date(cred.lastVerifiedAt).toLocaleTimeString('ar-SA', {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}`
+                              : ''}
+                          </span>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => onRemoveWebAuthnCredential(cred.id)}
+                        aria-label="حذف مفتاح البصمة"
+                        title="حذف مفتاح البصمة"
+                        className="p-2 rounded-lg bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-400 border border-slate-700 transition shrink-0"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Right: High-Value Purchase Verification Rules */}
+          <div className="lg:col-span-5 bg-slate-950 border border-slate-800 rounded-2xl p-4 space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h4 className="text-xs font-extrabold text-white flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                  <span>حماية المشتريات الكبيرة بالبصمة</span>
+                </h4>
+                <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                  طلب تأكيد بصمة الإصبع أو الوجه تلقائياً في نافذة الدفع عندما يتجاوز إجمالي الطلب الحد المحدد.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                role="switch"
+                aria-checked={webAuthnSettings.requireForHighValue}
+                onClick={() =>
+                  onUpdateWebAuthnSettings({
+                    ...webAuthnSettings,
+                    requireForHighValue: !webAuthnSettings.requireForHighValue,
+                  })
+                }
+                className={`px-3 py-1.5 rounded-xl text-[11px] font-extrabold border transition shrink-0 ${
+                  webAuthnSettings.requireForHighValue
+                    ? 'bg-emerald-600 text-white border-emerald-400/50'
+                    : 'bg-slate-900 text-slate-400 border-slate-700'
+                }`}
+              >
+                {webAuthnSettings.requireForHighValue ? 'مفعّل' : 'معطّل'}
+              </button>
+            </div>
+
+            <div className="space-y-2 pt-2 border-t border-slate-800">
+              <span className="text-[11px] font-bold text-slate-300 block">
+                الحد الأدنى للمطالبة بالتأكيد البيومتري:
+              </span>
+              <div className="grid grid-cols-2 gap-2">
+                {[500, 1000, 2500, 5000].map((amountSar) => {
+                  const isActive = webAuthnSettings.highValueThresholdSar === amountSar;
+                  return (
+                    <button
+                      key={amountSar}
+                      type="button"
+                      disabled={!webAuthnSettings.requireForHighValue}
+                      onClick={() =>
+                        onUpdateWebAuthnSettings({
+                          ...webAuthnSettings,
+                          highValueThresholdSar: amountSar,
+                        })
+                      }
+                      className={`px-3 py-2 rounded-xl text-xs font-bold border transition tabular-nums disabled:opacity-45 ${
+                        isActive
+                          ? 'bg-[#551465] text-white border-brand-400/60 shadow'
+                          : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      {formatPrice(amountSar, settings.activeCurrency, settings.yerExchangeRate)}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   );
 };

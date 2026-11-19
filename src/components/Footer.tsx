@@ -8,7 +8,6 @@ import {
   Mail, 
   MapPin, 
   Sparkles, 
-  FileCode2,
   Building2,
   Flame,
   HelpCircle,
@@ -17,31 +16,36 @@ import {
   Sun,
   Moon,
   Palette,
-  Map
+  Map,
+  Gift,
+  Languages,
+  Store
 } from 'lucide-react';
 import { StoreSettings, PageView, ThemeMode } from '../types';
+import { useLanguage } from '../contexts/LanguageContext';
 
 interface FooterProps {
   settings: StoreSettings;
   onNavigate?: (view: PageView) => void;
-  onOpenMasterPrompt: () => void;
   onOpenAIAssistant: () => void;
   onOpenSellerChat: () => void;
   theme?: ThemeMode;
   onToggleTheme?: () => void;
+  isAdminUnlocked?: boolean;
 }
 
 export const Footer: React.FC<FooterProps> = ({
   settings,
   onNavigate,
-  onOpenMasterPrompt,
   onOpenAIAssistant,
   onOpenSellerChat,
   theme = 'dark',
   onToggleTheme,
+  isAdminUnlocked = false,
 }) => {
+  const { lang, toggleLang, isRtl, t } = useLanguage();
   return (
-    <footer className="bg-slate-950 text-white border-t border-slate-800 pt-12 pb-24 md:pb-6" dir="rtl">
+    <footer className="bg-slate-950 text-white border-t border-slate-800 pt-12 pb-24 md:pb-6" dir={isRtl ? 'rtl' : 'ltr'}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
         {/* Value Proposition Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 pb-8 border-b border-slate-800 text-xs">
@@ -135,7 +139,19 @@ export const Footer: React.FC<FooterProps> = ({
               <li>
                 <button onClick={() => onNavigate?.('offers')} className="hover:text-brand-300 transition flex items-center gap-1">
                   <Flame className="w-3 h-3 text-amber-400" />
-                  <span>عروض وتخفيضات اليوم</span>
+                  <span>{t.navOffers}</span>
+                </button>
+              </li>
+              <li>
+                <button onClick={() => onNavigate?.('brands')} className="hover:text-brand-300 transition flex items-center gap-1 font-bold">
+                  <Store className="w-3 h-3 text-brand-300" />
+                  <span>{t.navBrands}</span>
+                </button>
+              </li>
+              <li>
+                <button onClick={() => onNavigate?.('gift-vouchers')} className="hover:text-brand-300 transition flex items-center gap-1 font-bold">
+                  <Gift className="w-3 h-3 text-brand-300" />
+                  <span>قسائم الهدايا الرقمية</span>
                 </button>
               </li>
               <li>
@@ -167,18 +183,14 @@ export const Footer: React.FC<FooterProps> = ({
                   <span>الإعلانات المدفوعة (إعلن معنا)</span>
                 </button>
               </li>
-              <li>
-                <button onClick={() => onNavigate?.('white-label')} className="hover:text-brand-300 transition flex items-center gap-1 font-bold">
-                  <Palette className="w-3 h-3 text-brand-300" />
-                  <span>تطبيق باسمك وشعارك (White-Label)</span>
-                </button>
-              </li>
-              <li>
-                <button onClick={onOpenMasterPrompt} className="hover:text-indigo-400 transition flex items-center gap-1">
-                  <FileCode2 className="w-3 h-3 text-indigo-400" />
-                  <span>عرض البرومبت الهندسي المعتمد</span>
-                </button>
-              </li>
+              {isAdminUnlocked && (
+                <li>
+                  <button onClick={() => onNavigate?.('white-label')} className="hover:text-brand-300 transition flex items-center gap-1 font-bold">
+                    <Palette className="w-3 h-3 text-brand-300" />
+                    <span>تطبيق باسمك وشعارك (White-Label)</span>
+                  </button>
+                </li>
+              )}
             </ul>
           </div>
 
@@ -248,6 +260,14 @@ export const Footer: React.FC<FooterProps> = ({
         <div className="pt-6 border-t border-slate-800/80 text-center text-slate-500 text-[11px] flex flex-col sm:flex-row items-center justify-between gap-3">
           <p>© 2026 جميع الحقوق محفوظة لمتجر رواج.</p>
           <div className="flex flex-wrap items-center justify-center gap-3">
+            <button
+              type="button"
+              onClick={toggleLang}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-brand-200 border border-slate-700 font-bold text-xs transition"
+            >
+              <Languages className="w-3.5 h-3.5 text-brand-300" />
+              <span>{lang === 'ar' ? 'English (LTR)' : 'العربية (RTL)'}</span>
+            </button>
             {onToggleTheme && (
               <button
                 type="button"
@@ -258,17 +278,19 @@ export const Footer: React.FC<FooterProps> = ({
                 {theme === 'dark' ? (
                   <>
                     <Sun className="w-3.5 h-3.5 text-amber-400" />
-                    <span>الوضع الفاتح عالي التباين</span>
+                    <span>{isRtl ? 'الوضع الفاتح عالي التباين' : 'Light Mode'}</span>
                   </>
                 ) : (
                   <>
                     <Moon className="w-3.5 h-3.5 text-brand-300" />
-                    <span>الوضع الداكن</span>
+                    <span>{isRtl ? 'الوضع الداكن' : 'Dark Mode'}</span>
                   </>
                 )}
               </button>
             )}
-            <p className="text-slate-400">متجر رواج الإلكتروني الذكي — الجمهورية اليمنية، حضرموت</p>
+            <p className="text-slate-400">
+              {isRtl ? 'متجر رواج الإلكتروني الذكي — الجمهورية اليمنية، حضرموت' : 'Rawaj Smart Store — Hadhramaut, Yemen'}
+            </p>
           </div>
         </div>
       </div>

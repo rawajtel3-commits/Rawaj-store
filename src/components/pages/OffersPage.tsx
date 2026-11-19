@@ -10,19 +10,27 @@ import {
   Zap,
   ShoppingBag,
   Flame,
-  Scale
+  Scale,
+  Heart,
+  Bell,
+  BellRing
 } from 'lucide-react';
-import { Product, StoreSettings } from '../../types';
+import { PriceDropAlert, Product, StoreSettings } from '../../types';
 import { formatPrice } from '../../utils/currency';
 import { LazyImage } from '../LazyImage';
+import { ProductShareButton } from '../ProductShareButton';
 
 interface OffersPageProps {
   products: Product[];
   onAddToCart: (p: Product) => void;
   onQuickView: (p: Product) => void;
   onBackToHome?: () => void;
+  wishlistIds?: string[];
+  onToggleWishlist?: (productId: string) => void;
   compareIds?: string[];
   onToggleCompare?: (productId: string) => void;
+  priceAlerts?: PriceDropAlert[];
+  onConfigurePriceAlert?: (product: Product) => void;
   settings?: StoreSettings;
 }
 
@@ -31,8 +39,12 @@ export const OffersPage: React.FC<OffersPageProps> = ({
   onAddToCart,
   onQuickView,
   onBackToHome,
+  wishlistIds = [],
+  onToggleWishlist,
   compareIds = [],
   onToggleCompare,
+  priceAlerts = [],
+  onConfigurePriceAlert,
   settings,
 }) => {
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
@@ -205,6 +217,24 @@ export const OffersPage: React.FC<OffersPageProps> = ({
                   خصم {savingsPercent}%
                 </div>
 
+                {/* Wishlist Button */}
+                {onToggleWishlist && (
+                  <button
+                    type="button"
+                    onClick={() => onToggleWishlist(product.id)}
+                    aria-pressed={wishlistIds.includes(product.id)}
+                    aria-label={wishlistIds.includes(product.id) ? 'إزالة من المفضلة' : 'إضافة للمفضلة'}
+                    className={`absolute top-6 left-6 z-10 px-2.5 py-1 rounded-xl backdrop-blur transition flex items-center gap-1 text-[10px] font-bold shadow ${
+                      wishlistIds.includes(product.id)
+                        ? 'bg-rose-600 text-white border border-rose-400/50'
+                        : 'bg-slate-900/85 hover:bg-slate-900 text-slate-200 hover:text-rose-300 border border-slate-700/80'
+                    }`}
+                  >
+                    <Heart className={`w-3.5 h-3.5 shrink-0 ${wishlistIds.includes(product.id) ? 'fill-white' : ''}`} />
+                    <span>{wishlistIds.includes(product.id) ? 'في المفضلة' : 'إضافة للمفضلة'}</span>
+                  </button>
+                )}
+
                 <div className="relative aspect-square overflow-hidden rounded-2xl bg-slate-950">
                   <LazyImage
                     src={product.images[0]}
@@ -233,6 +263,38 @@ export const OffersPage: React.FC<OffersPageProps> = ({
                   </div>
 
                   <div className="flex items-center gap-1.5">
+                    {onConfigurePriceAlert && (() => {
+                      const activeAlert = priceAlerts.find(
+                        (a) => a.isActive && a.productId === product.id
+                      );
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => onConfigurePriceAlert(product)}
+                          title={
+                            activeAlert
+                              ? 'تعديل التنبيه التلقائي للسعر'
+                              : 'تفعيل التنبيه التلقائي عند انخفاض السعر'
+                          }
+                          className={`p-2 rounded-xl border text-xs font-bold transition ${
+                            activeAlert
+                              ? 'bg-emerald-600 border-emerald-400/60 text-white'
+                              : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300 hover:text-amber-300'
+                          }`}
+                        >
+                          {activeAlert ? (
+                            <BellRing className="w-3.5 h-3.5" />
+                          ) : (
+                            <Bell className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      );
+                    })()}
+                    <ProductShareButton
+                      product={product}
+                      settings={settings}
+                      variant="icon"
+                    />
                     {onToggleCompare && (
                       <button
                         type="button"

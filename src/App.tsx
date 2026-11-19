@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { 
   Sparkles, 
   MessageSquareText, 
@@ -10,11 +10,15 @@ import {
   Filter, 
   Zap,
   ArrowRight,
-  FileCode2,
   CheckCircle2,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Lock,
+  Mic,
+  MicOff,
+  X,
+  Box
 } from 'lucide-react';
-import { Product, CartItem, Order, Category, AdminStats, StoreSettings, SellerChatMessage, PageView, CurrencyCode, ThemeMode, ReturnRequest, ReturnRequestStatus, FlashOfferConfig, UserProfile, LoyaltyTransaction, WhiteLabelTenant, BrowsingHistoryEntry, PriceDropAlert, InAppNotification } from './types';
+import { AdminCapabilitiesResponse, AuthUserRole, AuthUserSummary, isAdminRole, Product, CartItem, Order, Category, AdminStats, StoreSettings, SellerChatMessage, PageView, CurrencyCode, ThemeMode, ReturnRequest, ReturnRequestStatus, FlashOfferConfig, UserProfile, LoyaltyTransaction, WhiteLabelTenant, BrowsingHistoryEntry, PriceDropAlert, InAppNotification, WebAuthnCredentialRecord, WebAuthnSecuritySettings, WebAuthnSession, GiftVoucher, ServerSessionState, SecurityAuditEntry } from './types';
 import { 
   INITIAL_PRODUCTS, 
   INITIAL_ORDERS, 
@@ -30,6 +34,7 @@ import {
 import { Navbar } from './components/Navbar';
 import { ProductCard } from './components/ProductCard';
 import { ProductDetailModal } from './components/ProductDetailModal';
+import { ProductARModal } from './components/ProductARModal';
 import { CartDrawer } from './components/CartDrawer';
 import { CheckoutModal } from './components/CheckoutModal';
 import { AIAssistantDrawer } from './components/AIAssistantDrawer';
@@ -49,6 +54,16 @@ import { AdsPage } from './components/pages/AdsPage';
 import { ProfilePage } from './components/pages/ProfilePage';
 import { WhiteLabelStudioPage } from './components/pages/WhiteLabelStudioPage';
 import { SitemapPage } from './components/pages/SitemapPage';
+import { GiftVouchersPage } from './components/pages/GiftVouchersPage';
+import { BrandsPage } from './components/pages/BrandsPage';
+import { AmazonSaPage } from './components/pages/AmazonSaPage';
+import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
+import { slugifyBrandName } from './utils/brands';
+import {
+  loadGiftVouchers,
+  saveGiftVouchers,
+  normalizeGiftVoucherCode,
+} from './utils/giftVouchers';
 import { applyBrandPaletteToDocument } from './utils/whiteLabel';
 import { loadBrowsingHistory, saveBrowsingHistory, recordBrowsingView } from './utils/recommendations';
 import {
@@ -56,10 +71,12 @@ import {
   savePriceAlerts,
   loadNotifications,
   saveNotifications,
-  evaluatePriceDropNotification,
+  monitorAllProductsForPriceAlerts,
+  getOrCreatePriceAlertClientKey,
 } from './utils/priceAlerts';
 import { WishlistToast, WishlistToastState } from './components/WishlistToast';
 import { PriceDropToast } from './components/PriceDropToast';
+import { PriceAlertConfigModal } from './components/PriceAlertConfigModal';
 import { CompareBar } from './components/CompareBar';
 import { ProductCompareModal } from './components/ProductCompareModal';
 import { FlashOfferBanner } from './components/FlashOfferBanner';
@@ -67,16 +84,77 @@ import { MobileBottomNav } from './components/MobileBottomNav';
 import { ProductFilterSidebar, BrandFacet } from './components/ProductFilterSidebar';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { CheckoutReminderToast } from './components/CheckoutReminderToast';
+import { FloatingConciergeButton } from './components/FloatingConciergeButton';
+import { ArabicSpeechLocale, useVoiceSearch } from './hooks/useVoiceSearch';
 import { sendCheckoutReminderPushNotification } from './utils/checkoutReminder';
 import { formatPrice } from './utils/currency';
+import {
+  authenticateWithBiometrics,
+  detectWebAuthnSupport,
+  loadWebAuthnCredentials,
+  loadWebAuthnSession,
+  loadWebAuthnSettings,
+  mapWebAuthnErrorToArabic,
+  registerBiometricPasskey,
+  saveWebAuthnCredentials,
+  saveWebAuthnSession,
+  saveWebAuthnSettings,
+} from './utils/webauthn';
+import type { User } from 'firebase/auth';
+import {
+  resolveFirebaseUserRole,
+  loadSecurityLogsFromFirestore,
+  loadUserPrivateFromFirestore,
+  loadWishlistFromFirestore,
+  mapFirebaseAuthErrorToArabic,
+  recordSecurityLogToFirestore,
+  signInWithGoogleSecure,
+  signOutFirebaseSecure,
+  subscribeToFirebaseAuthState,
+  syncUserProfileToFirestore,
+  syncWishlistItemToFirestore,
+  testFirestoreConnection,
+} from './firebase';
+import { AuthModal, AuthModalMode } from './components/AuthModal';
+import {
+  initGoogleAnalytics,
+  trackAddToCart,
+  trackBeginCheckout,
+  trackCategoryView,
+  trackProductView,
+  trackPurchase,
+  trackStorePageView,
+  trackStoreSearch,
+} from './utils/googleAnalytics';
 
-export default function App() {
+function AppContent() {
+  const { lang, isRtl, t } = useLanguage();
+
   // Navigation & Page State (with SEO deep-link support)
+  const [initialGiftLookupCode] = useState<string>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('gift') ? normalizeGiftVoucherCode(params.get('gift') || '') : '';
+    } catch {
+      return '';
+    }
+  });
+  const [selectedBrandSlug, setSelectedBrandSlug] = useState<string | null>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const b = params.get('brand');
+      return b ? slugifyBrandName(b) : null;
+    } catch {
+      return null;
+    }
+  });
   const [currentView, setCurrentView] = useState<PageView>(() => {
     try {
       const params = new URLSearchParams(window.location.search);
+      if (params.get('gift')) return 'gift-vouchers';
+      if (params.get('brand') && !params.get('view')) return 'brands';
       const v = params.get('view') as PageView | null;
-      const allowed: PageView[] = ['home', 'offers', 'track-order', 'faq', 'policies', 'about', 'wishlist', 'ads', 'profile', 'white-label', 'sitemap'];
+      const allowed: PageView[] = ['home', 'offers', 'brands', 'amazon-sa', 'gift-vouchers', 'track-order', 'faq', 'policies', 'about', 'wishlist', 'ads', 'profile', 'white-label', 'sitemap'];
       return v && allowed.includes(v) ? v : 'home';
     } catch {
       return 'home';
@@ -110,6 +188,19 @@ export default function App() {
 
   // Application Data States
   const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
+  const [amazonProductsRegistry, setAmazonProductsRegistry] = useState<Product[]>([]);
+  const allResolvableProducts = useMemo(
+    () => [...products, ...amazonProductsRegistry],
+    [products, amazonProductsRegistry]
+  );
+  const handleSyncAmazonProducts = useCallback((synced: Product[]) => {
+    setAmazonProductsRegistry((prev) => {
+      const map = new Map<string, Product>();
+      for (const item of prev) map.set(item.id, item);
+      for (const item of synced) map.set(item.id, item);
+      return Array.from(map.values());
+    });
+  }, []);
   const [orders, setOrders] = useState<Order[]>(INITIAL_ORDERS);
   const [returnRequests, setReturnRequests] = useState<ReturnRequest[]>(INITIAL_RETURN_REQUESTS);
   const [flashOffer, setFlashOffer] = useState<FlashOfferConfig>(INITIAL_FLASH_OFFER);
@@ -222,6 +313,85 @@ export default function App() {
     }
   }, [userProfile, loyaltyHistory, loyaltyPoints, pendingRedeemPoints]);
 
+  // Web Authentication API (Biometric Passkeys & High-Value Security)
+  const [webAuthnCredentials, setWebAuthnCredentials] = useState<WebAuthnCredentialRecord[]>(() =>
+    loadWebAuthnCredentials()
+  );
+  const [webAuthnSession, setWebAuthnSession] = useState<WebAuthnSession>(() =>
+    loadWebAuthnSession()
+  );
+  const [webAuthnSettings, setWebAuthnSettings] = useState<WebAuthnSecuritySettings>(() =>
+    loadWebAuthnSettings()
+  );
+
+  useEffect(() => {
+    saveWebAuthnCredentials(webAuthnCredentials);
+  }, [webAuthnCredentials]);
+
+  useEffect(() => {
+    saveWebAuthnSession(webAuthnSession);
+  }, [webAuthnSession]);
+
+  useEffect(() => {
+    saveWebAuthnSettings(webAuthnSettings);
+  }, [webAuthnSettings]);
+
+  const handleRegisterWebAuthnCredential = (cred: WebAuthnCredentialRecord) => {
+    setWebAuthnCredentials((prev) => [cred, ...prev.filter((c) => c.id !== cred.id)]);
+  };
+
+  const handleBiometricVerified = (credentialId: string, verifiedAt: string) => {
+    setWebAuthnCredentials((prev) =>
+      prev.map((c) => (c.id === credentialId ? { ...c, lastVerifiedAt: verifiedAt } : c))
+    );
+    setWebAuthnSession({
+      authenticated: true,
+      credentialId,
+      verifiedAt,
+      userName: userProfile.fullName,
+    });
+  };
+
+  const handleRegisterWebAuthn = async () => {
+    const newCred = await registerBiometricPasskey({
+      userName: userProfile.email || 'customer@rawaj.store',
+      displayName: userProfile.fullName || 'عميل متجر رواج',
+    });
+    handleRegisterWebAuthnCredential(newCred);
+    handleBiometricVerified(newCred.id, newCred.createdAt);
+  };
+
+  const handleAuthenticateWebAuthn = async () => {
+    const res = await authenticateWithBiometrics(webAuthnCredentials.map((c) => c.id));
+    handleBiometricVerified(res.credentialId, res.verifiedAt);
+  };
+
+  const handleLogoutWebAuthn = () => {
+    setWebAuthnSession({ authenticated: false });
+  };
+
+  const handleRemoveWebAuthnCredential = (id: string) => {
+    setWebAuthnCredentials((prev) => prev.filter((c) => c.id !== id));
+    if (webAuthnSession.credentialId === id) {
+      setWebAuthnSession({ authenticated: false });
+    }
+  };
+
+  const handleQuickBiometricSignIn = async (): Promise<{ ok: boolean; message: string }> => {
+    try {
+      await handleAuthenticateWebAuthn();
+      return {
+        ok: true,
+        message: 'تم التحقق بالبصمة / الوجه وتسجيل دخولك بنجاح ✓',
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        message: mapWebAuthnErrorToArabic(err),
+      };
+    }
+  };
+
   // Filters & Search
   const [activeCategory, setActiveCategory] = useState<Category>(() => {
     try {
@@ -234,6 +404,11 @@ export default function App() {
     }
   });
   const [searchQuery, setSearchQuery] = useState('');
+  const catalogVoiceSearch = useVoiceSearch({
+    onResult: (spokenQuery) => {
+      setSearchQuery(spokenQuery);
+    },
+  });
   const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
   const [minRating, setMinRating] = useState<number>(0);
   const [inStockOnly, setInStockOnly] = useState<boolean>(false);
@@ -303,7 +478,48 @@ export default function App() {
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [appliedDiscount, setAppliedDiscount] = useState<number>(0);
   const [checkoutLoyaltyPointsToRedeem, setCheckoutLoyaltyPointsToRedeem] = useState<number>(0);
-  const [wishlistIds, setWishlistIds] = useState<string[]>([]);
+  const [giftVouchers, setGiftVouchers] = useState<GiftVoucher[]>(() => loadGiftVouchers());
+  const [appliedGiftVoucherCode, setAppliedGiftVoucherCode] = useState<string>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const giftParam = params.get('gift');
+      return giftParam ? normalizeGiftVoucherCode(giftParam) : '';
+    } catch {
+      return '';
+    }
+  });
+
+  useEffect(() => {
+    saveGiftVouchers(giftVouchers);
+  }, [giftVouchers]);
+
+  const handlePurchaseGiftVoucher = (newVoucher: GiftVoucher) => {
+    setGiftVouchers((prev) => [newVoucher, ...prev]);
+  };
+
+  const handleApplyGiftVoucherFromPage = (code: string) => {
+    setAppliedGiftVoucherCode(normalizeGiftVoucherCode(code));
+    setIsCartOpen(true);
+  };
+
+  const [wishlistIds, setWishlistIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('rawaj-wishlist-ids');
+      if (!saved) return [];
+      const parsed = JSON.parse(saved);
+      return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('rawaj-wishlist-ids', JSON.stringify(wishlistIds));
+    } catch {
+      // Ignore storage errors
+    }
+  }, [wishlistIds]);
   const [wishlistToast, setWishlistToast] = useState<WishlistToastState | null>(null);
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [isCompareOpen, setIsCompareOpen] = useState(false);
@@ -312,6 +528,7 @@ export default function App() {
   // Modals & Drawers Visibility
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [selectedProductMediaMode, setSelectedProductMediaMode] = useState<'images' | 'video'>('images');
+  const [arModalProduct, setArModalProduct] = useState<Product | null>(null);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
   const [isAIAssistantOpen, setIsAIAssistantOpen] = useState(false);
@@ -321,6 +538,366 @@ export default function App() {
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [isMasterPromptOpen, setIsMasterPromptOpen] = useState(false);
 
+  // Hardened Authentication & Session Security State
+  const [authReady, setAuthReady] = useState(false);
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [authUser, setAuthUser] = useState<AuthUserSummary | null>(null);
+  const [serverSession, setServerSession] = useState<ServerSessionState>({
+    authenticated: false,
+    pinEnabled: false,
+    pinVerified: false,
+    webauthnVerified: false,
+  });
+  const [securityLogs, setSecurityLogs] = useState<SecurityAuditEntry[]>([]);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authModalMode, setAuthModalMode] = useState<AuthModalMode>('account');
+  const [pendingAdminTarget, setPendingAdminTarget] = useState<'dashboard' | 'white-label'>('dashboard');
+  const [isWebAuthnSupported, setIsWebAuthnSupported] = useState(false);
+
+  const [adminCapabilities, setAdminCapabilities] = useState<AdminCapabilitiesResponse>({
+    authenticated: false,
+    role: 'customer',
+    originalRole: 'customer',
+    isAdmin: false,
+    isPromoterAdmin: false,
+    pinLocked: false,
+    canAccessMasterPrompt: false,
+    featureEnabled: true,
+    canManageRoles: false,
+    canRotateKeys: false,
+  });
+
+  const refreshAdminCapabilities = async () => {
+    try {
+      const res = await fetch('/api/admin/capabilities', {
+        method: 'GET',
+        cache: 'no-store',
+        headers: { 'X-Requested-With': 'RawajApp' },
+      });
+      if (res.ok) {
+        const data = (await res.json()) as AdminCapabilitiesResponse;
+        setAdminCapabilities(data);
+        return;
+      }
+    } catch {
+      // Ignore transient network errors
+    }
+  };
+
+  const isPinLocked = Boolean(serverSession.pinEnabled && !serverSession.pinVerified);
+  const isAdminUnlocked = Boolean(
+    authUser &&
+      isAdminRole(authUser.role) &&
+      authUser.emailVerified &&
+      serverSession.authenticated &&
+      isAdminRole(serverSession.role) &&
+      !isPinLocked
+  );
+  const canAccessMasterPrompt = Boolean(
+    isAdminUnlocked &&
+      adminCapabilities.isPromoterAdmin &&
+      adminCapabilities.canAccessMasterPrompt
+  );
+
+  useEffect(() => {
+    if (!isAdminUnlocked) {
+      setIsAdminOpen(false);
+      setIsMasterPromptOpen(false);
+    }
+  }, [isAdminUnlocked]);
+
+  useEffect(() => {
+    if (!canAccessMasterPrompt) {
+      setIsMasterPromptOpen(false);
+    }
+  }, [canAccessMasterPrompt]);
+
+  useEffect(() => {
+    void testFirestoreConnection();
+    detectWebAuthnSupport().then((info) => {
+      setIsWebAuthnSupported(info.supported);
+    });
+  }, []);
+
+  const refreshAuditLogs = async (user: User | null) => {
+    const merged: SecurityAuditEntry[] = [];
+    try {
+      const srvRes = await fetch('/api/auth/audit-log');
+      if (srvRes.ok) {
+        const srvJson = await srvRes.json();
+        if (Array.isArray(srvJson.entries)) {
+          merged.push(...srvJson.entries);
+        }
+      }
+    } catch {
+      // Ignore network errors on audit fetch
+    }
+    if (user && user.emailVerified) {
+      try {
+        const fsLogs = await loadSecurityLogsFromFirestore(user);
+        merged.push(...fsLogs);
+      } catch {
+        // Firestore errors are logged by handleFirestoreError
+      }
+    }
+    merged.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    setSecurityLogs(merged.slice(0, 20));
+  };
+
+  useEffect(() => {
+    const unsubscribe = subscribeToFirebaseAuthState(async (user) => {
+      setFirebaseUser(user);
+      if (!user) {
+        setAuthUser(null);
+        setServerSession({
+          authenticated: false,
+          pinEnabled: false,
+          pinVerified: false,
+          webauthnVerified: false,
+        });
+        setSecurityLogs([]);
+        setIsAdminOpen(false);
+        setAuthReady(true);
+        return;
+      }
+
+      const resolvedRole = await resolveFirebaseUserRole(user);
+      const summary: AuthUserSummary = {
+        uid: user.uid,
+        email: user.email || '',
+        emailVerified: user.emailVerified,
+        displayName: user.displayName || user.email?.split('@')[0] || 'عميل متجر رواج',
+        photoURL: user.photoURL || undefined,
+        role: resolvedRole,
+        providerId: user.providerData[0]?.providerId || 'google.com',
+      };
+      setAuthUser(summary);
+
+      // Sync verified HttpOnly server session
+      try {
+        const idToken = await user.getIdToken();
+        const sessRes = await fetch('/api/auth/session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            uid: user.uid,
+            email: user.email,
+            emailVerified: user.emailVerified,
+            displayName: summary.displayName,
+            idToken,
+          }),
+        });
+        if (sessRes.ok) {
+          const sessData = (await sessRes.json()) as ServerSessionState;
+          setServerSession(sessData);
+          if (sessData.role) {
+            setAuthUser((prev) => (prev ? { ...prev, role: sessData.role as AuthUserRole } : prev));
+          }
+        }
+      } catch {
+        // Ignore transient session sync failure
+      }
+      await refreshAdminCapabilities();
+
+      // Sync profile & wishlist with Firestore when email is verified
+      if (user.emailVerified) {
+        try {
+          const remoteProfile = await loadUserPrivateFromFirestore(user);
+          const mergedProfile: UserProfile = {
+            ...userProfile,
+            ...(remoteProfile || {}),
+            fullName:
+              remoteProfile?.fullName ||
+              (userProfile.fullName !== INITIAL_USER_PROFILE.fullName
+                ? userProfile.fullName
+                : summary.displayName),
+            email: user.email || remoteProfile?.email || userProfile.email,
+          };
+          setUserProfile(mergedProfile);
+          await syncUserProfileToFirestore(user, mergedProfile, {
+            twoFactorEnabled: serverSession.pinEnabled,
+            biometricEnabled: webAuthnCredentials.length > 0,
+          });
+        } catch {
+          // Non-blocking profile sync
+        }
+
+        try {
+          const remoteWishlist = await loadWishlistFromFirestore(user);
+          if (remoteWishlist.length > 0) {
+            setWishlistIds((prev) => Array.from(new Set([...prev, ...remoteWishlist])));
+          }
+        } catch {
+          // Non-blocking wishlist sync
+        }
+
+        await refreshAuditLogs(user);
+      }
+
+      setAuthReady(true);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const handleGoogleSignInFlow = async () => {
+    try {
+      const user = await signInWithGoogleSecure();
+      if (user.emailVerified) {
+        try {
+          await recordSecurityLogToFirestore(user, 'google_signin', 'success');
+        } catch {
+          // Handled cleanly
+        }
+        await refreshAuditLogs(user);
+      }
+    } catch (err) {
+      throw new Error(mapFirebaseAuthErrorToArabic(err));
+    }
+  };
+
+  const handleSecureSignOut = async () => {
+    const activeUser = firebaseUser;
+    if (activeUser && activeUser.emailVerified) {
+      try {
+        await recordSecurityLogToFirestore(activeUser, 'signout', 'success');
+      } catch {
+        // Ignore audit failure during signout
+      }
+    }
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch {
+      // Ignore
+    }
+    await signOutFirebaseSecure();
+    setWebAuthnSession({ authenticated: false });
+    setIsAdminOpen(false);
+  };
+
+  const handleSetupSecurityPin = async (
+    pin: string
+  ): Promise<{ ok: boolean; message: string }> => {
+    try {
+      const res = await fetch('/api/auth/pin/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        return { ok: false, message: data.error || 'تعذر حفظ رمز الأمان.' };
+      }
+      setServerSession((prev) => ({
+        ...prev,
+        pinEnabled: true,
+        pinVerified: true,
+      }));
+      if (firebaseUser && firebaseUser.emailVerified) {
+        try {
+          await syncUserProfileToFirestore(firebaseUser, userProfile, {
+            twoFactorEnabled: true,
+            biometricEnabled: webAuthnCredentials.length > 0,
+          });
+        } catch {
+          // Ignore
+        }
+      }
+      await refreshAuditLogs(firebaseUser);
+      return { ok: true, message: data.message || 'تم تفعيل رمز الأمان بنجاح.' };
+    } catch {
+      return { ok: false, message: 'تعذر الاتصال بخادم الأمان.' };
+    }
+  };
+
+  const handleVerifySecurityPin = async (
+    pin: string
+  ): Promise<{ ok: boolean; message: string; lockedUntil?: number }> => {
+    try {
+      const res = await fetch('/api/auth/pin/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (firebaseUser && firebaseUser.emailVerified) {
+          try {
+            await recordSecurityLogToFirestore(firebaseUser, 'pin_failed', 'blocked');
+          } catch {
+            // Ignore
+          }
+        }
+        await refreshAuditLogs(firebaseUser);
+        return {
+          ok: false,
+          message: data.error || 'رمز الأمان غير صحيح.',
+          lockedUntil: data.lockedUntil,
+        };
+      }
+      setServerSession((prev) => ({
+        ...prev,
+        pinEnabled: true,
+        pinVerified: true,
+        lockedUntil: undefined,
+      }));
+      await refreshAdminCapabilities();
+      if (firebaseUser && firebaseUser.emailVerified) {
+        try {
+          await recordSecurityLogToFirestore(firebaseUser, 'pin_verified', 'success');
+        } catch {
+          // Ignore
+        }
+      }
+      await refreshAuditLogs(firebaseUser);
+      return { ok: true, message: data.message || 'تم التحقق من رمز الأمان بنجاح.' };
+    } catch {
+      return { ok: false, message: 'تعذر الاتصال بخادم التحقق.' };
+    }
+  };
+
+  const handleDisableSecurityPin = async (
+    pin: string
+  ): Promise<{ ok: boolean; message: string }> => {
+    try {
+      const res = await fetch('/api/auth/pin/disable', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        return { ok: false, message: data.error || 'تعذر تعطيل رمز الأمان.' };
+      }
+      setServerSession((prev) => ({
+        ...prev,
+        pinEnabled: false,
+        pinVerified: true,
+      }));
+      await refreshAuditLogs(firebaseUser);
+      return { ok: true, message: data.message || 'تم تعطيل رمز الأمان.' };
+    } catch {
+      return { ok: false, message: 'تعذر الاتصال بخادم الأمان.' };
+    }
+  };
+
+  const handleRequestAdminAccess = (target: 'dashboard' | 'white-label' = 'dashboard') => {
+    if (isAdminUnlocked) {
+      if (firebaseUser && firebaseUser.emailVerified) {
+        void recordSecurityLogToFirestore(firebaseUser, 'admin_access', 'success').catch(() => {});
+      }
+      if (target === 'white-label') {
+        navigateTo('white-label');
+      } else {
+        setIsAdminOpen(true);
+      }
+      return;
+    }
+    setPendingAdminTarget(target);
+    setAuthModalMode('admin-gate');
+    setIsAuthModalOpen(true);
+  };
+
   const [browsingHistory, setBrowsingHistory] = useState<BrowsingHistoryEntry[]>(() =>
     loadBrowsingHistory()
   );
@@ -329,35 +906,88 @@ export default function App() {
     loadNotifications()
   );
   const [activePriceDropToast, setActivePriceDropToast] = useState<InAppNotification | null>(null);
+  const [priceAlertConfigProduct, setPriceAlertConfigProduct] = useState<Product | null>(null);
   const [activeCheckoutReminderToast, setActiveCheckoutReminderToast] =
     useState<InAppNotification | null>(null);
   const checkoutReminderTimerRef = useRef<number | null>(null);
+  const priceAlertClientKeyRef = useRef<string>(getOrCreatePriceAlertClientKey());
+  const priceAlertsRef = useRef<PriceDropAlert[]>(priceAlerts);
+  const previousProductPricesRef = useRef<Record<string, number> | null>(null);
+
+  useEffect(() => {
+    priceAlertsRef.current = priceAlerts;
+    savePriceAlerts(priceAlerts);
+  }, [priceAlerts]);
 
   useEffect(() => {
     saveBrowsingHistory(browsingHistory);
   }, [browsingHistory]);
 
   useEffect(() => {
-    savePriceAlerts(priceAlerts);
-  }, [priceAlerts]);
-
-  useEffect(() => {
     saveNotifications(notifications);
   }, [notifications]);
 
-  const handleTogglePriceAlert = (product: Product, targetPrice?: number) => {
+  // Hydrate any server-persisted price alerts cleanly on first mount
+  useEffect(() => {
+    let cancelled = false;
+    const clientKey = priceAlertClientKeyRef.current;
+    fetch(`/api/price-alerts?clientKey=${encodeURIComponent(clientKey)}`, {
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { alerts?: PriceDropAlert[] } | null) => {
+        if (cancelled || !data?.alerts || data.alerts.length === 0) return;
+        setPriceAlerts((prev) => {
+          const byProduct = new Map<string, PriceDropAlert>();
+          for (const a of prev) byProduct.set(a.productId, a);
+          for (const srv of data.alerts!) {
+            if (!byProduct.has(srv.productId)) {
+              byProduct.set(srv.productId, srv);
+            }
+          }
+          return Array.from(byProduct.values());
+        });
+      })
+      .catch(() => {
+        // Offline / localStorage fallback remains active
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const persistPriceAlertToServer = (product: Product, targetPrice?: number) => {
+    fetch('/api/price-alerts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clientKey: priceAlertClientKeyRef.current,
+        productId: product.id,
+        productName: product.name,
+        productImage: product.images[0] || '',
+        currentPrice: product.price,
+        targetPrice,
+      }),
+    }).catch(() => {
+      // Offline non-blocking persistence
+    });
+  };
+
+  const handleSavePriceAlert = (product: Product, targetPrice?: number) => {
     setPriceAlerts((prev) => {
       const existing = prev.find((a) => a.productId === product.id);
-      if (existing && targetPrice === undefined) {
-        return prev.filter((a) => a.productId !== product.id);
-      }
-      if (existing && targetPrice !== undefined) {
+      if (existing) {
         return prev.map((a) =>
           a.productId === product.id
             ? {
                 ...a,
+                productName: product.name,
+                productImage: product.images[0] || a.productImage,
                 subscribedPrice: product.price,
                 targetPrice,
+                lastTriggeredPrice: undefined,
+                triggeredAt: undefined,
                 isActive: true,
               }
             : a
@@ -375,10 +1005,28 @@ export default function App() {
       };
       return [newAlert, ...prev];
     });
+    persistPriceAlertToServer(product, targetPrice);
+  };
+
+  const handleTogglePriceAlert = (product: Product, targetPrice?: number) => {
+    const existing = priceAlertsRef.current.find((a) => a.productId === product.id);
+    if (existing && targetPrice === undefined) {
+      handleRemovePriceAlert(product.id);
+      return;
+    }
+    handleSavePriceAlert(product, targetPrice);
   };
 
   const handleRemovePriceAlert = (productId: string) => {
     setPriceAlerts((prev) => prev.filter((a) => a.productId !== productId));
+    fetch(
+      `/api/price-alerts/${encodeURIComponent(productId)}?clientKey=${encodeURIComponent(
+        priceAlertClientKeyRef.current
+      )}`,
+      { method: 'DELETE' }
+    ).catch(() => {
+      // Ignore offline error
+    });
   };
 
   const handleMarkNotificationRead = (id: string) => {
@@ -505,9 +1153,34 @@ export default function App() {
 
   const handleOpenProductDetail = (product: Product, mode: 'images' | 'video' = 'images') => {
     setBrowsingHistory((prev) => recordBrowsingView(prev, product));
+    trackProductView(product);
     setSelectedProductMediaMode(mode);
     setSelectedProduct(product);
   };
+
+  // Initialize Google Analytics 4 and track storefront page views
+  useEffect(() => {
+    initGoogleAnalytics();
+  }, []);
+
+  useEffect(() => {
+    trackStorePageView(currentView, document.title);
+  }, [currentView]);
+
+  useEffect(() => {
+    if (activeCategory !== 'all') {
+      trackCategoryView(activeCategory);
+    }
+  }, [activeCategory]);
+
+  useEffect(() => {
+    const clean = searchQuery.trim();
+    if (clean.length < 2) return;
+    const timer = window.setTimeout(() => {
+      trackStoreSearch(clean);
+    }, 650);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
 
   // Support ?product=... deep-links from Sitemap / SEO URLs
   useEffect(() => {
@@ -518,6 +1191,7 @@ export default function App() {
         const match = products.find((p) => p.id === productId);
         if (match) {
           setBrowsingHistory((prev) => recordBrowsingView(prev, match));
+          trackProductView(match);
           setSelectedProduct(match);
         }
       }
@@ -536,6 +1210,24 @@ export default function App() {
       offers: {
         title: `العروض والخصومات | ${settings.storeName}`,
         description: 'اكتشف أقوى عروض اليوم، التخفيضات الحصرية، وأكواد الخصم في متجر رواج.',
+      },
+      brands: {
+        title: lang === 'en' ? `Official Brands | ${settings.storeName}` : `الماركات الرسمية | ${settings.storeName}`,
+        description:
+          lang === 'en'
+            ? 'Explore authorized brand storefronts, verified products, and official local warranty.'
+            : 'تصفح متاجر العلامات التجارية الرسمية والمنتجات المعتمدة بضمان الوكيل.',
+      },
+      'amazon-sa': {
+        title: lang === 'en' ? `Amazon Saudi Arabia | ${settings.storeName}` : `تسوق من أمازون السعودية | ${settings.storeName}`,
+        description:
+          lang === 'en'
+            ? 'Browse and buy Amazon Saudi Arabia products directly inside Rawaj Store with live SAR pricing and unified checkout.'
+            : 'تصفح واشترِ منتجات أمازون السعودية مباشرة داخل متجر رواج بأسعار محدثة ودفع موحد وآمن.',
+      },
+      'gift-vouchers': {
+        title: `قسائم الهدايا الرقمية | ${settings.storeName}`,
+        description: 'اشترِ قسيمة هدية رقمية وأرسلها لصديق عبر البريد الإلكتروني أو كود مخصص للاستخدام في السلة وعند الدفع.',
       },
       'track-order': {
         title: `تتبع الطلبات والاسترجاع | ${settings.storeName}`,
@@ -650,15 +1342,22 @@ export default function App() {
       return [...prev, newItem];
     });
 
+    trackAddToCart(product, 1, product.price);
     setIsCartOpen(true);
   };
 
   const handleAddCustomCartItem = (cartItem: CartItem) => {
     setCartItems((prev) => [...prev, cartItem]);
+    trackAddToCart(
+      cartItem.product,
+      cartItem.quantity,
+      (cartItem.product.price + (cartItem.selectedVariant?.priceOffset || 0)) * cartItem.quantity
+    );
     setIsCartOpen(true);
   };
 
   const handleQuickAddRecommendedToCart = (product: Product) => {
+    trackAddToCart(product, 1, product.price);
     setCartItems((prev) => {
       const existingIdx = prev.findIndex(
         (item) => item.product.id === product.id && !item.selectedVariant && !item.selectedWarranty
@@ -744,12 +1443,32 @@ export default function App() {
 
   // Order Completed Event (Updates orders, clears cart, awards & deducts loyalty points)
   const handleOrderCompleted = (newOrder: Order) => {
+    trackPurchase(newOrder);
     handleCancelCheckoutReminder();
     setActiveCheckoutReminderToast(null);
     setNotifications((prev) => prev.filter((n) => n.type !== 'checkout_reminder'));
     setOrders((prev) => [newOrder, ...prev]);
     setCartItems([]);
     setAppliedDiscount(0);
+    setAppliedGiftVoucherCode('');
+
+    if (newOrder.giftVoucherCode && newOrder.giftVoucherDiscount && newOrder.giftVoucherDiscount > 0) {
+      const usedCode = normalizeGiftVoucherCode(newOrder.giftVoucherCode);
+      const usedAmount = newOrder.giftVoucherDiscount;
+      const usedAt = new Date().toISOString();
+      setGiftVouchers((prev) =>
+        prev.map((v) => {
+          if (normalizeGiftVoucherCode(v.code) !== usedCode) return v;
+          const nextBalance = Math.max(0, Math.round((v.remainingBalanceSar - usedAmount) * 100) / 100);
+          return {
+            ...v,
+            remainingBalanceSar: nextBalance,
+            lastUsedAt: usedAt,
+            status: nextBalance <= 0 ? 'redeemed' : 'partially_used',
+          };
+        })
+      );
+    }
 
     const redeemedPts = newOrder.loyaltyPointsRedeemed || 0;
     const earnedPts = newOrder.loyaltyPointsEarned || 0;
@@ -786,18 +1505,91 @@ export default function App() {
     }
   };
 
-  // Admin Actions
+  const stockLogDebounceRef = useRef<
+    Map<string, { initialStock: number; productName: string; timer: number }>
+  >(new Map());
+
+  const dispatchAdminModificationLog = (payload: {
+    category: 'price_change' | 'stock_update' | 'product_catalog' | 'settings_update';
+    actionLabelAr: string;
+    targetType: 'product' | 'store_settings';
+    targetId: string;
+    targetName: string;
+    fieldLabelAr: string;
+    previousValue: string;
+    newValue: string;
+    summaryAr: string;
+  }) => {
+    try {
+      void fetch('/api/admin/modification-logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        keepalive: true,
+      }).catch(() => {});
+    } catch {
+      // Never block admin UI on telemetry failure
+    }
+  };
+
+  // Admin Actions (Strictly gated by verified Admin RBAC)
   const handleAddProduct = (newProd: Product) => {
+    if (!isAdminUnlocked) return;
     setProducts((prev) => [newProd, ...prev]);
+    dispatchAdminModificationLog({
+      category: 'product_catalog',
+      actionLabelAr: 'إضافة منتج جديد',
+      targetType: 'product',
+      targetId: newProd.id,
+      targetName: newProd.name,
+      fieldLabelAr: 'السعر والمخزون',
+      previousValue: 'غير موجود',
+      newValue: `${newProd.price.toLocaleString()} ر.س (${newProd.stock} قطعة)`,
+      summaryAr: `إضافة منتج جديد إلى الكتالوج: ${newProd.name}`,
+    });
   };
 
   const handleUpdateProductStock = (id: string, newStock: number) => {
+    if (!isAdminUnlocked) return;
+    const cleanStock = Math.max(0, Math.round(newStock));
+    const targetProduct = products.find((p) => p.id === id);
+    if (!targetProduct) return;
+
+    const existingPending = stockLogDebounceRef.current.get(id);
+    const initialStock = existingPending ? existingPending.initialStock : targetProduct.stock;
+    if (existingPending) {
+      window.clearTimeout(existingPending.timer);
+    }
+
     setProducts((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, stock: newStock } : p))
+      prev.map((p) => (p.id === id ? { ...p, stock: cleanStock } : p))
     );
+
+    if (initialStock !== cleanStock) {
+      const timer = window.setTimeout(() => {
+        stockLogDebounceRef.current.delete(id);
+        dispatchAdminModificationLog({
+          category: 'stock_update',
+          actionLabelAr: 'تحديث كمية المخزون',
+          targetType: 'product',
+          targetId: id,
+          targetName: targetProduct.name,
+          fieldLabelAr: 'الكمية المتوفرة',
+          previousValue: `${initialStock} قطعة`,
+          newValue: `${cleanStock} قطعة`,
+          summaryAr: `تعديل مخزون "${targetProduct.name}" من ${initialStock} إلى ${cleanStock} قطعة`,
+        });
+      }, 650);
+      stockLogDebounceRef.current.set(id, {
+        initialStock,
+        productName: targetProduct.name,
+        timer,
+      });
+    }
   };
 
   const handleUpdateProductPrice = (id: string, newPrice: number) => {
+    if (!isAdminUnlocked) return;
     const cleanPrice = Math.max(1, Math.round(newPrice));
     const targetProduct = products.find((p) => p.id === id);
     if (!targetProduct) return;
@@ -819,27 +1611,71 @@ export default function App() {
     setProducts((prev) => prev.map((p) => (p.id === id ? updatedProduct : p)));
     setSelectedProduct((prev) => (prev && prev.id === id ? updatedProduct : prev));
 
-    if (isDrop) {
-      const { triggeredNotification, updatedAlerts } = evaluatePriceDropNotification(
-        updatedProduct,
-        oldPrice,
-        cleanPrice,
-        priceAlerts
-      );
-      if (triggeredNotification) {
-        setPriceAlerts(updatedAlerts);
-        setNotifications((prev) => [triggeredNotification, ...prev]);
-        setActivePriceDropToast(triggeredNotification);
-        window.setTimeout(() => {
-          setActivePriceDropToast((curr) =>
-            curr?.id === triggeredNotification.id ? null : curr
-          );
-        }, 9000);
-      }
+    if (oldPrice !== cleanPrice) {
+      dispatchAdminModificationLog({
+        category: 'price_change',
+        actionLabelAr: isDrop ? 'تخفيض سعر منتج' : 'تعديل سعر منتج',
+        targetType: 'product',
+        targetId: id,
+        targetName: targetProduct.name,
+        fieldLabelAr: 'السعر',
+        previousValue: `${oldPrice.toLocaleString()} ر.س`,
+        newValue: `${cleanPrice.toLocaleString()} ر.س`,
+        summaryAr: `${isDrop ? 'تخفيض' : 'تحديث'} سعر "${targetProduct.name}" من ${oldPrice.toLocaleString()} إلى ${cleanPrice.toLocaleString()} ر.س`,
+      });
     }
+
+    // Automatic price drop monitoring effect below handles alert notifications cleanly whenever catalog prices change.
   };
 
+  // Automatic real-time catalog watcher: evaluates all active Target Price Alerts on any price drop
+  useEffect(() => {
+    const prevPrices = previousProductPricesRef.current;
+    const nextPriceMap: Record<string, number> = {};
+    for (const prod of products) {
+      nextPriceMap[prod.id] = prod.price;
+    }
+
+    if (prevPrices === null) {
+      previousProductPricesRef.current = nextPriceMap;
+      return;
+    }
+
+    const activeAlerts = priceAlertsRef.current;
+    if (activeAlerts.length > 0) {
+      const { triggeredNotifications, updatedAlerts } = monitorAllProductsForPriceAlerts(
+        products,
+        prevPrices,
+        activeAlerts
+      );
+      if (triggeredNotifications.length > 0) {
+        setPriceAlerts(updatedAlerts);
+        setNotifications((prev) => [...triggeredNotifications, ...prev]);
+        const latest = triggeredNotifications[0];
+        setActivePriceDropToast(latest);
+        window.setTimeout(() => {
+          setActivePriceDropToast((curr) => (curr?.id === latest.id ? null : curr));
+        }, 9000);
+
+        fetch('/api/price-alerts/evaluate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clientKey: priceAlertClientKeyRef.current,
+            products,
+            previousPrices: prevPrices,
+          }),
+        }).catch(() => {
+          // Non-blocking backend sync
+        });
+      }
+    }
+
+    previousProductPricesRef.current = nextPriceMap;
+  }, [products]);
+
   const handleUpdateProductVideo = (id: string, videoUrl: string, videoTitle?: string) => {
+    if (!isAdminUnlocked) return;
     const trimmedUrl = videoUrl.trim();
     setProducts((prev) =>
       prev.map((p) => {
@@ -862,10 +1698,26 @@ export default function App() {
   };
 
   const handleDeleteProduct = (id: string) => {
+    if (!isAdminUnlocked) return;
+    const targetProduct = products.find((p) => p.id === id);
     setProducts((prev) => prev.filter((p) => p.id !== id));
+    if (targetProduct) {
+      dispatchAdminModificationLog({
+        category: 'product_catalog',
+        actionLabelAr: 'حذف منتج من الكتالوج',
+        targetType: 'product',
+        targetId: id,
+        targetName: targetProduct.name,
+        fieldLabelAr: 'الحالة',
+        previousValue: 'نشط في الكتالوج',
+        newValue: 'محذوف',
+        summaryAr: `حذف المنتج "${targetProduct.name}" من الكتالوج`,
+      });
+    }
   };
 
   const handleUpdateOrderStatus = (orderId: string, status: Order['status']) => {
+    if (!isAdminUnlocked) return;
     setOrders((prev) =>
       prev.map((o) => (o.id === orderId ? { ...o, status } : o))
     );
@@ -880,6 +1732,7 @@ export default function App() {
     status: ReturnRequestStatus,
     adminNote?: string
   ) => {
+    if (!isAdminUnlocked) return;
     setReturnRequests((prev) =>
       prev.map((ret) =>
         ret.id === returnId
@@ -894,13 +1747,22 @@ export default function App() {
   };
 
   const handleToggleWishlist = (productId: string) => {
-    const targetProduct = products.find((p) => p.id === productId);
+    const targetProduct = allResolvableProducts.find((p) => p.id === productId);
     const isAlreadyWishlisted = wishlistIds.includes(productId);
     setWishlistIds((prev) =>
       prev.includes(productId)
         ? prev.filter((id) => id !== productId)
         : [...prev, productId]
     );
+    if (firebaseUser && firebaseUser.emailVerified) {
+      void syncWishlistItemToFirestore(
+        firebaseUser,
+        productId,
+        isAlreadyWishlisted ? 'remove' : 'add'
+      ).catch(() => {
+        // Error details captured via handleFirestoreError
+      });
+    }
     if (targetProduct) {
       setWishlistToast({
         product: targetProduct,
@@ -942,7 +1804,7 @@ export default function App() {
   };
 
   const compareProducts = compareIds
-    .map((id) => products.find((p) => p.id === id))
+    .map((id) => allResolvableProducts.find((p) => p.id === id))
     .filter((p): p is Product => Boolean(p));
 
   const handleAddProductReview = (
@@ -989,11 +1851,21 @@ export default function App() {
   };
 
   const navigateTo = (view: PageView) => {
+    if (view === 'white-label' && !isAdminUnlocked) {
+      setPendingAdminTarget('white-label');
+      setAuthModalMode('admin-gate');
+      setIsAuthModalOpen(true);
+    }
     if (view !== currentView) {
       setViewHistory((prev) => [...prev, currentView]);
       setCurrentView(view);
     }
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleOpenBrandStorefront = (brandSlug: string) => {
+    setSelectedBrandSlug(brandSlug);
+    navigateTo('brands');
   };
 
   const handleGoBack = () => {
@@ -1015,24 +1887,10 @@ export default function App() {
         onNavigate={navigateTo}
         activeCategory={activeCategory}
         onSelectCategory={setActiveCategory}
-        searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
         cartCount={totalCartCount}
         onOpenCart={() => setIsCartOpen(true)}
-        onOpenAIAssistant={() => setIsAIAssistantOpen(true)}
-        onOpenSellerChat={() => {
-          setChatAttachedProduct(null);
-          setIsSellerChatOpen(true);
-        }}
-        onOpenAdmin={() => setIsAdminOpen(true)}
-        onOpenMasterPrompt={() => setIsMasterPromptOpen(true)}
-        wishlistCount={wishlistIds.length}
-        compareCount={compareProducts.length}
-        onOpenCompare={() => setIsCompareOpen(true)}
+        onOpenAdmin={() => handleRequestAdminAccess('dashboard')}
         settings={settings}
-        onChangeCurrency={handleChangeCurrency}
-        theme={theme}
-        onToggleTheme={handleToggleTheme}
         loyaltyPoints={loyaltyPoints}
         notifications={notifications}
         priceAlerts={priceAlerts}
@@ -1041,11 +1899,19 @@ export default function App() {
         onMarkAllNotificationsRead={handleMarkAllNotificationsRead}
         onClearNotifications={handleClearNotifications}
         onRemovePriceAlert={handleRemovePriceAlert}
+        onEditPriceAlert={(p) => setPriceAlertConfigProduct(p)}
         onOpenProduct={(p) => handleOpenProductDetail(p, 'images')}
+        authUser={authUser}
+        isPinLocked={isPinLocked}
+        isAdminUnlocked={isAdminUnlocked}
+        onOpenAuth={() => {
+          setAuthModalMode('account');
+          setIsAuthModalOpen(true);
+        }}
       />
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-6 space-y-6 sm:space-y-8" dir="rtl">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-6 space-y-6 sm:space-y-8" dir={isRtl ? 'rtl' : 'ltr'}>
         {currentView === 'home' && (
           <>
             {/* Top Limited-Time Flash Offer Countdown Banner */}
@@ -1069,18 +1935,18 @@ export default function App() {
                     ) : (
                       <Sparkles className="w-4 h-4 text-brand-300" />
                     )}
-                    <span>أهلاً بكم في متجر رواج الإلكتروني الذكي المدعوم بـ Gemini AI</span>
+                    <span>{t.heroBadge}</span>
                   </div>
 
                   <h2 className="text-2xl sm:text-4xl font-extrabold text-white leading-tight">
-                    تسوق أحدث المنتجات الذكية مع <br />
+                    {t.heroTitleLine1} <br />
                     <span className="bg-gradient-to-r from-brand-300 via-purple-300 to-indigo-300 bg-clip-text text-transparent">
-                      مساعد الشراء الذكي والدردشة المباشرة
+                      {t.heroTitleLine2}
                     </span>
                   </h2>
 
                   <p className="text-slate-300 text-xs sm:text-sm max-w-2xl leading-relaxed">
-                    اكتشف تجربة تسوق متطورة باللغة العربية: مواصفات تفصيلية، خيارات تخصيص ونقش مجاني، أنظمة دفع آمنة (بطاقات ائتمان، محافظ إلكترونية محلية، الدفع عند الاستلام)، ومساعد ذكي يختار الأنسب لميزانيتك.
+                    {t.heroSubtitle}
                   </p>
 
                   <div className="flex flex-wrap items-center gap-3 pt-2">
@@ -1089,15 +1955,28 @@ export default function App() {
                       className="bg-[#551465] hover:bg-brand-700 text-white font-extrabold px-5 py-3 rounded-2xl text-xs sm:text-sm flex items-center gap-2 shadow-lg shadow-[#551465]/30 transition transform active:scale-95"
                     >
                       <Sparkles className="w-4 h-4 text-brand-200" />
-                      <span>تحدث مع المساعد الذكي الآن</span>
+                      <span>{t.heroCta}</span>
                     </button>
-
                     <button
-                      onClick={() => setIsMasterPromptOpen(true)}
-                      className="bg-slate-800/90 hover:bg-slate-800 text-slate-200 border border-slate-700 font-bold px-4 py-3 rounded-2xl text-xs sm:text-sm flex items-center gap-2 transition"
+                      type="button"
+                      onClick={() => {
+                        setSelectedBrandSlug(null);
+                        navigateTo('brands');
+                      }}
+                      className="bg-slate-900/90 hover:bg-slate-800 text-slate-100 border border-slate-700 font-bold px-4 py-3 rounded-2xl text-xs sm:text-sm flex items-center gap-2 transition"
                     >
-                      <FileCode2 className="w-4 h-4 text-indigo-400" />
-                      <span>عرض البرومبت الهندسي المعتمد</span>
+                      <Award className="w-4 h-4 text-amber-300" />
+                      <span>{t.navBrands}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setArModalProduct(products.find((p) => p.id === 'prod-9') || products[0] || null)
+                      }
+                      className="bg-slate-900/90 hover:bg-[#551465]/40 text-brand-200 hover:text-white border border-brand-500/40 font-bold px-4 py-3 rounded-2xl text-xs sm:text-sm flex items-center gap-2 transition shadow-md"
+                    >
+                      <Box className="w-4 h-4 text-brand-300" />
+                      <span>{isRtl ? 'جرب الأثاث والإلكترونيات بـ AR' : 'Try AR Room Studio'}</span>
                     </button>
                   </div>
                 </div>
@@ -1132,15 +2011,113 @@ export default function App() {
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
                 <div>
                   <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                    <span>معرض المنتجات المتاحة</span>
+                    <span>{t.catalogTitle}</span>
                     <span className="text-xs bg-slate-800 text-brand-300 px-2.5 py-0.5 rounded-full border border-slate-700 font-bold tabular-nums">
-                      {filteredProducts.length} منتج
+                      {filteredProducts.length} {t.catalogProductUnit}
                     </span>
                   </h3>
-                  <p className="text-xs text-slate-400">تصفح المواصفات، فلتر حسب السعر والماركة والتقييم، واطلب التخصيص الفوري</p>
+                  <p className="text-xs text-slate-400">{t.catalogSubtitle}</p>
                 </div>
 
                 <div className="w-full sm:w-auto flex flex-wrap items-center gap-2">
+                  {/* Catalog Search Bar (Primary Desktop Search + Voice Search) */}
+                  <div className="hidden md:block relative w-64 lg:w-72">
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder={t.searchPlaceholder}
+                      aria-label={t.searchPlaceholder}
+                      className={`w-full min-h-[38px] bg-slate-900 text-white placeholder-slate-400 rounded-xl py-1.5 text-xs border border-slate-700 focus:outline-none focus:border-[#551465] focus:ring-2 focus:ring-[#551465]/30 transition ${
+                        isRtl ? 'pr-9 pl-16' : 'pl-9 pr-16'
+                      }`}
+                    />
+                    <Search className={`w-3.5 h-3.5 text-slate-400 absolute top-1/2 -translate-y-1/2 pointer-events-none ${isRtl ? 'right-3' : 'left-3'}`} />
+                    <div className={`absolute top-1/2 -translate-y-1/2 flex items-center gap-1 ${isRtl ? 'left-1.5' : 'right-1.5'}`}>
+                      {searchQuery && (
+                        <button
+                          type="button"
+                          onClick={() => setSearchQuery('')}
+                          aria-label="مسح البحث"
+                          className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={catalogVoiceSearch.toggleListening}
+                        aria-pressed={catalogVoiceSearch.isListening}
+                        aria-label="البحث الصوتي باللغة العربية"
+                        title={
+                          catalogVoiceSearch.isListening
+                            ? 'إيقاف الاستماع الصوتي'
+                            : 'البحث بالأوامر الصوتية (العربية)'
+                        }
+                        className={`p-1.5 rounded-lg border transition ${
+                          catalogVoiceSearch.isListening
+                            ? 'bg-rose-600 text-white border-rose-400'
+                            : 'bg-slate-950 hover:bg-slate-800 text-brand-300 border-slate-700'
+                        }`}
+                      >
+                        {catalogVoiceSearch.isListening ? (
+                          <MicOff className="w-3.5 h-3.5" />
+                        ) : (
+                          <Mic className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                    </div>
+
+                    {(catalogVoiceSearch.isListening || catalogVoiceSearch.error) && (
+                      <div
+                        role="status"
+                        className="absolute top-full inset-x-0 mt-1.5 z-40 bg-slate-900 border border-[#551465]/60 rounded-xl p-2.5 shadow-2xl text-[11px] space-y-1.5"
+                      >
+                        {catalogVoiceSearch.isListening ? (
+                          <>
+                            <span className="font-bold text-white block truncate">
+                              {catalogVoiceSearch.interimTranscript
+                                ? `«${catalogVoiceSearch.interimTranscript}»`
+                                : 'جاري الاستماع بالعربية...'}
+                            </span>
+                            <div className="flex items-center gap-1">
+                              {([
+                                { id: 'ar-SA', label: 'العربية' },
+                                { id: 'ar-YE', label: 'اليمن' },
+                                { id: 'ar-EG', label: 'مصر' },
+                              ] as { id: ArabicSpeechLocale; label: string }[]).map((loc) => (
+                                <button
+                                  key={loc.id}
+                                  type="button"
+                                  onClick={() => catalogVoiceSearch.setLang(loc.id)}
+                                  className={`px-2 py-0.5 rounded-md font-bold border transition ${
+                                    catalogVoiceSearch.lang === loc.id
+                                      ? 'bg-[#551465] text-white border-brand-400/50'
+                                      : 'bg-slate-800 text-slate-300 border-slate-700'
+                                  }`}
+                                >
+                                  {loc.label}
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        ) : (
+                          <div className="flex items-center justify-between gap-2 text-rose-300 font-bold">
+                            <span>{catalogVoiceSearch.error}</span>
+                            <button
+                              type="button"
+                              onClick={catalogVoiceSearch.clearError}
+                              aria-label="إغلاق التنبيه"
+                              className="p-0.5 rounded bg-slate-800 text-slate-300 hover:text-white"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
                   {/* Mobile & Tablet Filter Drawer Trigger */}
                   <button
                     type="button"
@@ -1148,7 +2125,7 @@ export default function App() {
                     className="lg:hidden flex-1 sm:flex-initial min-h-[38px] px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white border border-slate-700 text-xs font-bold flex items-center justify-center gap-2 transition"
                   >
                     <SlidersHorizontal className="w-4 h-4 text-brand-300" />
-                    <span>تصفية متقدمة</span>
+                    <span>{t.advancedFilter}</span>
                     {activeFilterCount > 0 && (
                       <span className="bg-[#551465] text-white text-[10px] px-1.5 py-0.2 rounded-full font-black tabular-nums">
                         {activeFilterCount}
@@ -1160,23 +2137,24 @@ export default function App() {
                   <select
                     value={sortBy}
                     onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
-                    aria-label="ترتيب المنتجات"
+                    aria-label={t.sortDefault}
                     className="flex-1 sm:flex-initial min-h-[38px] bg-slate-900 text-slate-200 border border-slate-700 rounded-xl px-3 py-1.5 text-xs font-bold focus:outline-none focus:border-[#551465]"
                   >
-                    <option value="default">الترتيب: الافتراضي</option>
-                    <option value="price-asc">السعر: من الأقل للأعلى</option>
-                    <option value="price-desc">السعر: من الأعلى للأقل</option>
-                    <option value="rating-desc">التقييم: الأعلى تقييماً</option>
+                    <option value="default">{t.sortDefault}</option>
+                    <option value="price-asc">{t.sortPriceAsc}</option>
+                    <option value="price-desc">{t.sortPriceDesc}</option>
+                    <option value="rating-desc">{t.sortRatingDesc}</option>
                   </select>
 
                   {searchQuery && (
-                    <div className="flex items-center gap-2 text-xs bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-800">
+                    <div className="md:hidden flex items-center gap-2 text-xs bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-800">
                       <span className="text-slate-400">بحث:</span>
                       <strong className="text-brand-300">"{searchQuery}"</strong>
-                      <button 
+                      <button
                         type="button"
                         onClick={() => setSearchQuery('')}
                         className="text-slate-500 hover:text-white mr-1"
+                        aria-label="مسح البحث"
                       >
                         ✕
                       </button>
@@ -1290,6 +2268,12 @@ export default function App() {
                           isCompared={compareIds.includes(product.id)}
                           onToggleCompare={handleToggleCompare}
                           onAddReview={handleAddProductReview}
+                          onSelectBrand={handleOpenBrandStorefront}
+                          onTryAR={(p) => setArModalProduct(p)}
+                          activePriceAlert={priceAlerts.find(
+                            (a) => a.isActive && a.productId === product.id
+                          )}
+                          onConfigurePriceAlert={(p) => setPriceAlertConfigProduct(p)}
                           settings={settings}
                         />
                       ))}
@@ -1308,9 +2292,72 @@ export default function App() {
             onQuickView={handleOpenProductDetail}
             onAddToCart={handleAddToCart}
             onBackToHome={handleGoBack}
+            wishlistIds={wishlistIds}
+            onToggleWishlist={handleToggleWishlist}
             compareIds={compareIds}
             onToggleCompare={handleToggleCompare}
+            priceAlerts={priceAlerts}
+            onConfigurePriceAlert={(p) => setPriceAlertConfigProduct(p)}
             settings={settings}
+          />
+        )}
+
+        {currentView === 'brands' && (
+          <BrandsPage
+            products={products}
+            selectedBrandSlug={selectedBrandSlug}
+            onSelectBrandSlug={setSelectedBrandSlug}
+            onQuickView={handleOpenProductDetail}
+            onAddToCart={handleAddToCart}
+            onAskAI={(p) => openAIWithProduct(p)}
+            wishlistIds={wishlistIds}
+            onToggleWishlist={handleToggleWishlist}
+            compareIds={compareIds}
+            onToggleCompare={handleToggleCompare}
+            onAddReview={handleAddProductReview}
+            defaultReviewerName={authUser?.displayName || userProfile.fullName}
+            onTryAR={(p) => setArModalProduct(p)}
+            priceAlerts={priceAlerts}
+            onConfigurePriceAlert={(p) => setPriceAlertConfigProduct(p)}
+            onBackToHome={handleGoBack}
+            settings={settings}
+          />
+        )}
+
+        {currentView === 'amazon-sa' && (
+          <AmazonSaPage
+            settings={settings}
+            onAddToCart={(product) => {
+              handleSyncAmazonProducts([product]);
+              handleAddToCart(product);
+            }}
+            onBuyNow={(product) => {
+              handleSyncAmazonProducts([product]);
+              handleAddToCart(product);
+              setIsCartOpen(true);
+            }}
+            onQuickView={(product, mode) => {
+              handleSyncAmazonProducts([product]);
+              handleOpenProductDetail(product, mode);
+            }}
+            wishlistIds={wishlistIds}
+            onToggleWishlist={handleToggleWishlist}
+            compareIds={compareIds}
+            onToggleCompare={handleToggleCompare}
+            onCatalogItemsSynced={handleSyncAmazonProducts}
+            onBackToHome={handleGoBack}
+          />
+        )}
+
+        {currentView === 'gift-vouchers' && (
+          <GiftVouchersPage
+            vouchers={giftVouchers}
+            settings={settings}
+            userProfile={userProfile}
+            initialLookupCode={initialGiftLookupCode}
+            onPurchaseVoucher={handlePurchaseGiftVoucher}
+            onApplyVoucherToCart={handleApplyGiftVoucherFromPage}
+            onBackToHome={handleGoBack}
           />
         )}
 
@@ -1350,7 +2397,7 @@ export default function App() {
         {currentView === 'wishlist' && (
           <WishlistPage
             wishlistIds={wishlistIds}
-            products={products}
+            products={allResolvableProducts}
             onQuickView={handleOpenProductDetail}
             onAddToCart={handleAddToCart}
             onRemoveFromWishlist={handleToggleWishlist}
@@ -1387,17 +2434,79 @@ export default function App() {
             onNavigateToHome={() => navigateTo('home')}
             onOpenCart={() => setIsCartOpen(true)}
             settings={settings}
+            webAuthnCredentials={webAuthnCredentials}
+            webAuthnSession={webAuthnSession}
+            webAuthnSettings={webAuthnSettings}
+            onRegisterWebAuthn={handleRegisterWebAuthn}
+            onAuthenticateWebAuthn={handleAuthenticateWebAuthn}
+            onLogoutWebAuthn={handleLogoutWebAuthn}
+            onRemoveWebAuthnCredential={handleRemoveWebAuthnCredential}
+            onUpdateWebAuthnSettings={setWebAuthnSettings}
+            authUser={authUser}
+            serverSession={serverSession}
+            onOpenAuth={() => {
+              setAuthModalMode('account');
+              setIsAuthModalOpen(true);
+            }}
+            onSignOut={handleSecureSignOut}
+            theme={theme}
+            onToggleTheme={handleToggleTheme}
+            onChangeCurrency={handleChangeCurrency}
+            compareCount={compareProducts.length}
+            onOpenCompare={() => setIsCompareOpen(true)}
+            onNavigateToWishlist={() => navigateTo('wishlist')}
+            onOpenAdmin={() => handleRequestAdminAccess('dashboard')}
           />
         )}
 
-        {currentView === 'white-label' && (
-          <WhiteLabelStudioPage
-            onBackToHome={handleGoBack}
-            activeAppliedTenantId={activeWhiteLabelId}
-            onApplyBrandingToStore={handleApplyWhiteLabelToStore}
-            onResetStoreBranding={handleResetWhiteLabelStore}
-          />
-        )}
+        {currentView === 'white-label' &&
+          (isAdminUnlocked ? (
+            <WhiteLabelStudioPage
+              onBackToHome={handleGoBack}
+              activeAppliedTenantId={activeWhiteLabelId}
+              onApplyBrandingToStore={handleApplyWhiteLabelToStore}
+              onResetStoreBranding={handleResetWhiteLabelStore}
+            />
+          ) : (
+            <section className="max-w-xl mx-auto my-8 bg-slate-900 border border-amber-500/40 rounded-3xl p-6 sm:p-8 text-center space-y-5 shadow-2xl">
+              <div className="w-16 h-16 mx-auto rounded-2xl bg-amber-500/15 border border-amber-500/40 flex items-center justify-center">
+                <Lock className="w-8 h-8 text-amber-400" />
+              </div>
+              <div className="space-y-2">
+                <h2 className="text-xl font-extrabold text-white">صفحة الإدارة مقفلة</h2>
+                <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
+                  {!authReady
+                    ? 'جاري التحقق من جلسة المسؤول وصلاحيات الوصول...'
+                    : !authUser
+                    ? 'الوصول إلى استوديو الإدارة وتخصيص التطبيق يتطلب تسجيل الدخول بحساب المسؤول المعتمد.'
+                    : !isAdminRole(authUser.role)
+                    ? 'حسابك الحالي مسجل كعميل ولا يملك صلاحيات المسؤول للوصول إلى هذه الصفحة.'
+                    : isPinLocked
+                    ? 'الجلسة الإدارية مقفلة برمز التحقق الثنائي (2FA PIN). يرجى تأكيد الرمز لفتح الصفحة.'
+                    : 'يجب إتمام التحقق الأمني للجلسة الإدارية قبل فتح هذه الصفحة.'}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
+                {authReady && (
+                  <button
+                    type="button"
+                    onClick={() => handleRequestAdminAccess('white-label')}
+                    className="px-5 py-2.5 rounded-xl bg-[#551465] hover:bg-brand-700 text-white font-bold text-xs flex items-center gap-2 transition shadow-lg shadow-[#551465]/30"
+                  >
+                    <ShieldCheck className="w-4 h-4 text-amber-300" />
+                    <span>{isPinLocked ? 'فتح القفل برمز 2FA' : 'تسجيل دخول المسؤول'}</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => navigateTo('home')}
+                  className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs border border-slate-700 transition"
+                >
+                  العودة إلى المتجر
+                </button>
+              </div>
+            </section>
+          ))}
 
         {currentView === 'sitemap' && (
           <SitemapPage
@@ -1413,6 +2522,7 @@ export default function App() {
               setChatAttachedProduct(null);
               setIsSellerChatOpen(true);
             }}
+            isAdminUnlocked={isAdminUnlocked}
           />
         )}
       </main>
@@ -1421,7 +2531,6 @@ export default function App() {
       <Footer
         settings={settings}
         onNavigate={navigateTo}
-        onOpenMasterPrompt={() => setIsMasterPromptOpen(true)}
         onOpenAIAssistant={() => setIsAIAssistantOpen(true)}
         onOpenSellerChat={() => {
           setChatAttachedProduct(null);
@@ -1429,6 +2538,7 @@ export default function App() {
         }}
         theme={theme}
         onToggleTheme={handleToggleTheme}
+        isAdminUnlocked={isAdminUnlocked}
       />
 
       {/* Product Detail Modal */}
@@ -1439,6 +2549,8 @@ export default function App() {
         onAddToCart={handleAddCustomCartItem}
         onOpenSellerChatWithProduct={(p) => openSellerChatWithProduct(p)}
         onAskAIAboutProduct={(p) => openAIWithProduct(p)}
+        isWishlisted={selectedProduct ? wishlistIds.includes(selectedProduct.id) : false}
+        onToggleWishlist={handleToggleWishlist}
         isCompared={selectedProduct ? compareIds.includes(selectedProduct.id) : false}
         onToggleCompare={handleToggleCompare}
         settings={settings}
@@ -1455,6 +2567,27 @@ export default function App() {
         }
         onTogglePriceAlert={handleTogglePriceAlert}
         onAddReview={handleAddProductReview}
+      />
+
+      {/* Global Camera AR Product Try-On Studio Modal */}
+      <ProductARModal
+        isOpen={Boolean(arModalProduct)}
+        product={arModalProduct}
+        allProducts={products}
+        onClose={() => setArModalProduct(null)}
+        onAddToCart={(prod, variant) => {
+          if (variant) {
+            handleAddCustomCartItem({
+              product: prod,
+              selectedVariant: variant,
+              quantity: 1,
+            });
+          } else {
+            handleAddToCart(prod);
+          }
+          setArModalProduct(null);
+        }}
+        settings={settings}
       />
 
       {/* Product Comparison Modal */}
@@ -1478,14 +2611,26 @@ export default function App() {
         items={cartItems}
         onUpdateQuantity={handleUpdateQuantity}
         onRemoveItem={handleRemoveItem}
-        onProceedToCheckout={(promoDiscount, loyaltyPointsUsed) => {
+        onProceedToCheckout={(promoDiscount, loyaltyPointsUsed, _loyaltyDisc, giftVoucherCode) => {
           setAppliedDiscount(promoDiscount);
           setCheckoutLoyaltyPointsToRedeem(loyaltyPointsUsed);
+          if (giftVoucherCode !== undefined) {
+            setAppliedGiftVoucherCode(giftVoucherCode);
+          }
+          const cartValueSar = cartItems.reduce(
+            (sum, i) => sum + (i.product.price + (i.selectedVariant?.priceOffset || 0)) * i.quantity,
+            0
+          );
+          trackBeginCheckout(totalCartCount, Math.max(0, cartValueSar - promoDiscount));
           setIsCheckoutOpen(true);
         }}
         loyaltyPoints={loyaltyPoints}
         pendingRedeemPoints={pendingRedeemPoints}
         onSetPendingRedeemPoints={setPendingRedeemPoints}
+        giftVouchers={giftVouchers}
+        appliedGiftVoucherCode={appliedGiftVoucherCode}
+        onApplyGiftVoucherCode={setAppliedGiftVoucherCode}
+        onNavigateToGiftVouchers={() => navigateTo('gift-vouchers')}
         settings={settings}
       />
 
@@ -1502,6 +2647,13 @@ export default function App() {
         onScheduleCheckoutReminder={handleScheduleCheckoutReminder}
         onCancelCheckoutReminder={handleCancelCheckoutReminder}
         settings={settings}
+        webAuthnCredentials={webAuthnCredentials}
+        webAuthnSettings={webAuthnSettings}
+        onRegisterWebAuthnCredential={handleRegisterWebAuthnCredential}
+        onBiometricVerified={handleBiometricVerified}
+        giftVouchers={giftVouchers}
+        initialGiftVoucherCode={appliedGiftVoucherCode}
+        onGiftVoucherCodeChange={setAppliedGiftVoucherCode}
       />
 
       {/* AI Assistant Drawer */}
@@ -1522,9 +2674,10 @@ export default function App() {
         onSendMessage={handleSendSellerMessage}
       />
 
-      {/* Admin Control Panel */}
+      {/* Admin Control Panel (Strict Dual-Verified RBAC Protected) */}
       <AdminDashboard
-        isOpen={isAdminOpen}
+        isOpen={isAdminOpen && isAdminUnlocked}
+        isAuthorized={isAdminUnlocked}
         onClose={() => setIsAdminOpen(false)}
         products={products}
         onAddProduct={handleAddProduct}
@@ -1538,19 +2691,119 @@ export default function App() {
         returnRequests={returnRequests}
         onUpdateReturnStatus={handleUpdateReturnStatus}
         flashOffer={flashOffer}
-        onSaveFlashOffer={setFlashOffer}
+        onSaveFlashOffer={(updated) => {
+          if (isAdminUnlocked) setFlashOffer(updated);
+        }}
         stats={stats}
         settings={settings}
-        onSaveSettings={(s) => setSettings(s)}
+        onSaveSettings={(s) => {
+          if (!isAdminUnlocked) return;
+          const prevRate = settings.yerExchangeRate;
+          const prevCurr = settings.activeCurrency;
+          setSettings(s);
+          dispatchAdminModificationLog({
+            category: 'settings_update',
+            actionLabelAr: 'تحديث إعدادات المتجر',
+            targetType: 'store_settings',
+            targetId: 'store-general-settings',
+            targetName: s.storeName || 'إعدادات المتجر العامة',
+            fieldLabelAr: 'العملة وسعر الصرف',
+            previousValue: `${prevCurr} (${prevRate} ر.ي)`,
+            newValue: `${s.activeCurrency} (${s.yerExchangeRate} ر.ي)`,
+            summaryAr: `تحديث إعدادات المتجر (${s.storeName}) والعملة الافتراضية إلى ${s.activeCurrency}`,
+          });
+        }}
         onOpenWhiteLabelStudio={() => {
+          if (!isAdminUnlocked) return;
           setIsAdminOpen(false);
           navigateTo('white-label');
         }}
+        onOpenMasterPrompt={() => {
+          if (isAdminUnlocked && canAccessMasterPrompt) setIsMasterPromptOpen(true);
+        }}
+        authUserEmail={authUser?.email}
+        adminRole={adminCapabilities.role}
+        originalAdminRole={adminCapabilities.originalRole}
+        canAccessMasterPrompt={canAccessMasterPrompt}
+        masterPromptFeatureEnabled={adminCapabilities.featureEnabled}
+        onCapabilitiesChanged={refreshAdminCapabilities}
+        onSwitchRolePreview={async (targetRole) => {
+          try {
+            const res = await fetch('/api/admin/roles/switch-preview', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ targetRole }),
+            });
+            if (res.ok) {
+              const data = await res.json();
+              setServerSession((prev) => ({
+                ...prev,
+                role: data.role,
+                originalRole: data.originalRole,
+                canAccessMasterPrompt: data.canAccessMasterPrompt,
+                masterPromptFeatureEnabled: data.featureEnabled,
+              }));
+              setAuthUser((prev) => (prev ? { ...prev, role: data.role } : prev));
+              await refreshAdminCapabilities();
+            }
+          } catch {
+            // Ignore network error
+          }
+        }}
+        onLockAdmin={() => {
+          void handleSecureSignOut();
+        }}
       />
 
-      {/* Master Prompt Modal */}
+      {/* Secure Login, 2FA PIN & Admin RBAC Modal */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        mode={authModalMode}
+        onClose={() => setIsAuthModalOpen(false)}
+        authReady={authReady}
+        authUser={authUser}
+        serverSession={serverSession}
+        securityLogs={securityLogs}
+        hasWebAuthnPasskey={webAuthnCredentials.length > 0}
+        isWebAuthnSupported={isWebAuthnSupported}
+        onGoogleSignIn={handleGoogleSignInFlow}
+        onSignOut={handleSecureSignOut}
+        onSetupPin={handleSetupSecurityPin}
+        onVerifyPin={handleVerifySecurityPin}
+        onDisablePin={handleDisableSecurityPin}
+        onVerifyBiometrics={async () => {
+          const res = await handleQuickBiometricSignIn();
+          if (res.ok) {
+            setServerSession((prev) => ({
+              ...prev,
+              webauthnVerified: true,
+              pinVerified: true,
+            }));
+            await refreshAdminCapabilities();
+            if (firebaseUser && firebaseUser.emailVerified) {
+              void recordSecurityLogToFirestore(firebaseUser, 'webauthn_verified', 'success').catch(
+                () => {}
+              );
+            }
+            await refreshAuditLogs(firebaseUser);
+          }
+          return res;
+        }}
+        onEnterAdminAfterUnlock={() => {
+          setIsAuthModalOpen(false);
+          if (pendingAdminTarget === 'white-label') {
+            setPendingAdminTarget('dashboard');
+            navigateTo('white-label');
+          } else {
+            setIsAdminOpen(true);
+          }
+        }}
+        onNavigateToProfileSecurity={() => navigateTo('profile')}
+      />
+
+      {/* Master Prompt Modal (Promoter Admin Only — Verified by Server RBAC) */}
       <MasterPromptModal
-        isOpen={isMasterPromptOpen}
+        isOpen={isMasterPromptOpen && isAdminUnlocked && canAccessMasterPrompt}
         onClose={() => setIsMasterPromptOpen(false)}
       />
 
@@ -1589,6 +2842,21 @@ export default function App() {
         }}
       />
 
+      {/* Quick Target Price Drop Alert Configurator Modal */}
+      <PriceAlertConfigModal
+        isOpen={Boolean(priceAlertConfigProduct)}
+        product={priceAlertConfigProduct}
+        existingAlert={
+          priceAlertConfigProduct
+            ? priceAlerts.find((a) => a.isActive && a.productId === priceAlertConfigProduct.id)
+            : undefined
+        }
+        settings={settings}
+        onClose={() => setPriceAlertConfigProduct(null)}
+        onSaveAlert={handleSavePriceAlert}
+        onRemoveAlert={handleRemovePriceAlert}
+      />
+
       {/* Floating Abandoned Checkout Push Notification Toast */}
       <CheckoutReminderToast
         notification={activeCheckoutReminderToast}
@@ -1597,6 +2865,17 @@ export default function App() {
         onCompleteOrder={() =>
           handleCompleteOrderFromReminder(activeCheckoutReminderToast?.id)
         }
+      />
+
+      {/* Unified Floating AI Assistant & Live Seller Chat Button */}
+      <FloatingConciergeButton
+        onOpenAIAssistant={() => setIsAIAssistantOpen(true)}
+        onOpenSellerChat={() => {
+          setChatAttachedProduct(null);
+          setIsSellerChatOpen(true);
+        }}
+        hasCompareBar={compareProducts.length > 0 && !isCompareOpen}
+        hidden={isAIAssistantOpen || isSellerChatOpen || isCartOpen || isCheckoutOpen || isAdminOpen}
       />
 
       {/* Persistent Mobile Bottom Navigation Bar */}
@@ -1626,10 +2905,31 @@ export default function App() {
         products={products}
         onOpenProduct={(p) => handleOpenProductDetail(p, 'images')}
         onMarkNotificationRead={handleMarkNotificationRead}
+        isBiometricAuthenticated={webAuthnSession.authenticated}
+        hasWebAuthnPasskey={webAuthnCredentials.length > 0}
+        onQuickBiometricSignIn={handleQuickBiometricSignIn}
+        authUser={authUser}
+        isPinLocked={isPinLocked}
+        isAdminUnlocked={isAdminUnlocked}
+        onOpenAuth={() => {
+          setAuthModalMode('account');
+          setIsAuthModalOpen(true);
+        }}
+        activeCurrency={settings.activeCurrency}
+        onChangeCurrency={handleChangeCurrency}
+        onOpenAdmin={() => handleRequestAdminAccess('dashboard')}
       />
 
       {/* Offline Mode Connectivity Indicator */}
       <OfflineIndicator />
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <LanguageProvider>
+      <AppContent />
+    </LanguageProvider>
   );
 }

@@ -18,9 +18,22 @@ import {
   ArrowRight,
   Coins,
   AlertCircle,
-  BellRing
+  BellRing,
+  Fingerprint,
+  Loader2,
+  Gift,
 } from 'lucide-react';
-import { CartItem, CustomerInfo, PaymentMethodId, Order, StoreSettings, UserProfile } from '../types';
+import {
+  CartItem,
+  CustomerInfo,
+  GiftVoucher,
+  PaymentMethodId,
+  Order,
+  StoreSettings,
+  UserProfile,
+  WebAuthnCredentialRecord,
+  WebAuthnSecuritySettings,
+} from '../types';
 import {
   MIN_REDEEM_POINTS,
   calculateEarnedPoints,
@@ -33,6 +46,17 @@ import {
   PushPermissionStatus,
   requestPushPermissionSafely,
 } from '../utils/checkoutReminder';
+import {
+  WebAuthnSupportInfo,
+  authenticateWithBiometrics,
+  detectWebAuthnSupport,
+  mapWebAuthnErrorToArabic,
+  registerBiometricPasskey,
+} from '../utils/webauthn';
+import {
+  findRedeemableGiftVoucher,
+  normalizeGiftVoucherCode,
+} from '../utils/giftVouchers';
 
 interface CheckoutReminderSnapshot {
   itemsCount: number;
@@ -53,6 +77,13 @@ interface CheckoutModalProps {
   onScheduleCheckoutReminder?: (delayMs: number, snapshot: CheckoutReminderSnapshot) => void;
   onCancelCheckoutReminder?: () => void;
   settings: StoreSettings;
+  webAuthnCredentials?: WebAuthnCredentialRecord[];
+  webAuthnSettings?: WebAuthnSecuritySettings;
+  onRegisterWebAuthnCredential?: (cred: WebAuthnCredentialRecord) => void;
+  onBiometricVerified?: (credentialId: string, verifiedAt: string) => void;
+  giftVouchers?: GiftVoucher[];
+  initialGiftVoucherCode?: string;
+  onGiftVoucherCodeChange?: (code: string) => void;
 }
 
 export const CheckoutModal: React.FC<CheckoutModalProps> = ({
@@ -67,6 +98,13 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   onScheduleCheckoutReminder,
   onCancelCheckoutReminder,
   settings,
+  webAuthnCredentials = [],
+  webAuthnSettings,
+  onRegisterWebAuthnCredential,
+  onBiometricVerified,
+  giftVouchers = [],
+  initialGiftVoucherCode = '',
+  onGiftVoucherCodeChange,
 }) => {
   const [step, setStep] = useState<'info' | 'payment' | 'confirmation'>('info');
 
@@ -108,12 +146,31 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     getPushPermissionStatus()
   );
 
+  // High-Value Biometric Confirmation (WebAuthn API) State
+  const [isBiometricVerifiedForOrder, setIsBiometricVerifiedForOrder] = useState(false);
+  const [biometricLoading, setBiometricLoading] = useState(false);
+  const [biometricError, setBiometricError] = useState('');
+  const [biometricFallbackAck, setBiometricFallbackAck] = useState(false);
+  const [webAuthnSupport, setWebAuthnSupport] = useState<WebAuthnSupportInfo | null>(null);
+
+  // Gift Voucher Redemption State
+  const [appliedVoucherCode, setAppliedVoucherCode] = useState<string>(initialGiftVoucherCode);
+  const [voucherCodeInput, setVoucherCodeInput] = useState<string>('');
+  const [voucherError, setVoucherError] = useState<string>('');
+
   useEffect(() => {
     if (isOpen) {
       setStep('info');
       setPaymentError('');
       setRedeemPoints(initialLoyaltyPointsToRedeem);
+      setAppliedVoucherCode(initialGiftVoucherCode);
+      setVoucherCodeInput('');
+      setVoucherError('');
       setPushPermission(getPushPermissionStatus());
+      setIsBiometricVerifiedForOrder(false);
+      setBiometricError('');
+      setBiometricFallbackAck(false);
+      detectWebAuthnSupport().then(setWebAuthnSupport);
       onCancelCheckoutReminder?.();
       if (userProfile) {
         setCustomer((prev) => ({
@@ -125,7 +182,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         }));
       }
     }
-  }, [isOpen, initialLoyaltyPointsToRedeem, userProfile]);
+  }, [isOpen, initialLoyaltyPointsToRedeem, initialGiftVoucherCode, userProfile]);
 
   const totalItemsCount = items.reduce((sum, item) => sum + item.quantity, 0);
 
@@ -145,9 +202,16 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     const maxPts = Math.min(Math.floor(loyaltyPoints / 10) * 10, discountSarToPoints(afterCoupon));
     const usedPts = redeemPoints >= MIN_REDEEM_POINTS ? Math.min(redeemPoints, maxPts) : 0;
     const loyaltyDisc = Math.min(afterCoupon, pointsToDiscountSar(usedPts));
-    const netEst = Math.max(0, afterCoupon - loyaltyDisc);
+    const afterLoyalty = Math.max(0, afterCoupon - loyaltyDisc);
+    const activeVoucher = appliedVoucherCode
+      ? findRedeemableGiftVoucher(giftVouchers, appliedVoucherCode).voucher
+      : undefined;
+    const voucherDisc = activeVoucher
+      ? Math.min(afterLoyalty, activeVoucher.remainingBalanceSar)
+      : 0;
+    const netEst = Math.max(0, afterLoyalty - voucherDisc);
     const vatEst = Math.round(netEst * (settings.vatPercentage / 100) * 100) / 100;
-    const shipEst = netEst >= settings.freeShippingThreshold ? 0 : 25;
+    const shipEst = subtotalEstimate >= settings.freeShippingThreshold ? 0 : 25;
     const fullEstimatedTotal = netEst + vatEst + shipEst;
 
     const handleVisibilityChange = () => {
@@ -177,6 +241,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     discountAmount,
     loyaltyPoints,
     redeemPoints,
+    appliedVoucherCode,
+    giftVouchers,
     settings.vatPercentage,
     settings.freeShippingThreshold,
   ]);
@@ -203,12 +269,39 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     remainingAfterCoupon,
     pointsToDiscountSar(effectiveRedeemPoints)
   );
+  const remainingAfterLoyalty = Math.max(0, remainingAfterCoupon - loyaltyDiscountSar);
 
-  const netSubtotal = Math.max(0, remainingAfterCoupon - loyaltyDiscountSar);
+  const activeGiftVoucher = appliedVoucherCode
+    ? findRedeemableGiftVoucher(giftVouchers, appliedVoucherCode).voucher
+    : undefined;
+  const giftVoucherDiscountSar = activeGiftVoucher
+    ? Math.min(remainingAfterLoyalty, activeGiftVoucher.remainingBalanceSar)
+    : 0;
+
+  const netSubtotal = Math.max(0, remainingAfterLoyalty - giftVoucherDiscountSar);
   const vatAmount = Math.round(netSubtotal * (settings.vatPercentage / 100) * 100) / 100;
-  const shippingFee = netSubtotal >= settings.freeShippingThreshold ? 0 : 25;
+  const shippingFee = subtotal >= settings.freeShippingThreshold ? 0 : 25;
   const total = netSubtotal + vatAmount + shippingFee;
   const earnedPoints = calculateEarnedPoints(netSubtotal);
+
+  const handleApplyCheckoutGiftVoucher = () => {
+    setVoucherError('');
+    const candidate = normalizeGiftVoucherCode(voucherCodeInput);
+    const result = findRedeemableGiftVoucher(giftVouchers, candidate);
+    if (!result.voucher) {
+      setVoucherError(result.error || 'كود قسيمة الهدية غير صحيح.');
+      return;
+    }
+    setAppliedVoucherCode(result.voucher.code);
+    onGiftVoucherCodeChange?.(result.voucher.code);
+    setVoucherCodeInput('');
+  };
+
+  const handleRemoveCheckoutGiftVoucher = () => {
+    setAppliedVoucherCode('');
+    onGiftVoucherCodeChange?.('');
+    setVoucherError('');
+  };
 
   const yemenCities = [
     'المكلا (حضرموت)', 'صنعاء', 'عدن', 'تعز', 'سيئون (حضرموت)',
@@ -333,6 +426,38 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     </div>
   );
 
+  const highValueThreshold = webAuthnSettings?.highValueThresholdSar ?? 1000;
+  const requiresBiometricConfirmation = Boolean(
+    (webAuthnSettings?.requireForHighValue ?? true) && total >= highValueThreshold
+  );
+
+  const handleBiometricOrderConfirm = async () => {
+    setBiometricError('');
+    setPaymentError('');
+    setBiometricLoading(true);
+    try {
+      if (webAuthnCredentials.length > 0) {
+        const result = await authenticateWithBiometrics(
+          webAuthnCredentials.map((c) => c.id)
+        );
+        onBiometricVerified?.(result.credentialId, result.verifiedAt);
+        setIsBiometricVerifiedForOrder(true);
+      } else {
+        const newCred = await registerBiometricPasskey({
+          userName: customer.email || userProfile?.email || 'customer@rawaj.store',
+          displayName: customer.fullName || userProfile?.fullName || 'عميل متجر رواج',
+        });
+        onRegisterWebAuthnCredential?.(newCred);
+        onBiometricVerified?.(newCred.id, newCred.createdAt);
+        setIsBiometricVerifiedForOrder(true);
+      }
+    } catch (err) {
+      setBiometricError(mapWebAuthnErrorToArabic(err));
+    } finally {
+      setBiometricLoading(false);
+    }
+  };
+
   const handleFinalizePayment = () => {
     setPaymentError('');
     // Validate card if card payment selected
@@ -348,6 +473,17 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       }
     }
 
+    if (
+      requiresBiometricConfirmation &&
+      !isBiometricVerifiedForOrder &&
+      !biometricFallbackAck
+    ) {
+      setPaymentError(
+        'يتطلب إتمام هذا الطلب الكبير تأكيداً عبر بصمة الإصبع أو التعرف على الوجه (Web Authentication API) لتعزيز الأمان.'
+      );
+      return;
+    }
+
     const newOrder: Order = {
       id: `ord-${Date.now()}`,
       orderNumber: `ORD-2026-${Math.floor(1000 + Math.random() * 9000)}`,
@@ -361,6 +497,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       loyaltyDiscount: loyaltyDiscountSar,
       loyaltyPointsRedeemed: effectiveRedeemPoints,
       loyaltyPointsEarned: earnedPoints,
+      ...(activeGiftVoucher && giftVoucherDiscountSar > 0
+        ? {
+            giftVoucherCode: activeGiftVoucher.code,
+            giftVoucherDiscount: giftVoucherDiscountSar,
+          }
+        : {}),
       vat: vatAmount,
       shippingFee,
       total,
@@ -370,6 +512,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     onCancelCheckoutReminder?.();
     setCreatedOrder(newOrder);
     onOrderCompleted(newOrder);
+    setCardNumber('');
+    setCardExpiry('');
+    setCardCvc('');
     setStep('confirmation');
   };
 
@@ -771,7 +916,155 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               </div>
             )}
 
+            {/* Digital Gift Voucher Redemption Panel inside Checkout */}
+            <div className="bg-slate-950 border border-emerald-500/30 rounded-2xl p-4 space-y-2.5 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Gift className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span className="font-extrabold text-white">تطبيق قسيمة هدية رقمية عند الدفع</span>
+                </div>
+                {activeGiftVoucher && (
+                  <span className="font-mono font-bold text-emerald-400">
+                    -{formatPrice(giftVoucherDiscountSar, settings.activeCurrency, settings.yerExchangeRate)}
+                  </span>
+                )}
+              </div>
+
+              {activeGiftVoucher ? (
+                <div className="flex items-center justify-between gap-2 bg-emerald-950/35 border border-emerald-500/35 rounded-xl p-2.5">
+                  <div className="min-w-0">
+                    <span className="font-mono font-bold text-emerald-300 block">
+                      ✓ تم تطبيق القسيمة: {activeGiftVoucher.code}
+                    </span>
+                    <span className="text-[11px] text-slate-300 block">
+                      الخصم المطبق: {formatPrice(giftVoucherDiscountSar, settings.activeCurrency, settings.yerExchangeRate)}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleRemoveCheckoutGiftVoucher}
+                    className="px-3 py-1.5 rounded-lg bg-rose-950/60 border border-rose-500/40 text-rose-300 font-bold text-[11px] shrink-0"
+                  >
+                    إزالة القسيمة
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={voucherCodeInput}
+                      onChange={(e) => setVoucherCodeInput(e.target.value)}
+                      placeholder="أدخل كود قسيمة الهدية (GIFT-...)"
+                      dir="ltr"
+                      className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono uppercase placeholder-slate-500 focus:outline-none focus:border-[#551465] text-right"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleApplyCheckoutGiftVoucher}
+                      className="px-4 py-2 rounded-xl bg-[#551465] hover:bg-brand-700 text-white font-bold text-xs transition shrink-0"
+                    >
+                      تطبيق القسيمة
+                    </button>
+                  </div>
+                  {voucherError && (
+                    <span className="text-[11px] text-rose-400 block">{voucherError}</span>
+                  )}
+                </div>
+              )}
+            </div>
+
             {renderPushReminderPanel()}
+
+            {/* High-Value Purchase Biometric Verification (WebAuthn API) */}
+            {requiresBiometricConfirmation && (
+              <div className="bg-slate-950 border border-[#551465]/60 rounded-2xl p-4 space-y-3 text-xs">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex items-start gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-[#551465]/25 border border-brand-400/40 flex items-center justify-center text-brand-300 shrink-0 mt-0.5">
+                      <Fingerprint className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <span className="font-extrabold text-white flex items-center gap-2">
+                        <span>تأكيد الشراء بالبصمة أو الوجه</span>
+                        <span className="text-[10px] font-mono bg-slate-900 border border-slate-700 text-brand-300 px-1.5 py-0.5 rounded">
+                          WebAuthn
+                        </span>
+                      </span>
+                      <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
+                        لأن قيمة الطلب تتجاوز{' '}
+                        <strong className="text-amber-300 tabular-nums">
+                          {formatPrice(
+                            highValueThreshold,
+                            settings.activeCurrency,
+                            settings.yerExchangeRate
+                          )}
+                        </strong>
+                        ، يتطلب المتجر تأكيداً بيومترياً عبر مستشعر البصمة أو الوجه لحماية مدفوعاتك.
+                      </p>
+                    </div>
+                  </div>
+
+                  {isBiometricVerifiedForOrder && (
+                    <span className="bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 px-3 py-1 rounded-xl text-[11px] font-extrabold flex items-center gap-1.5 shrink-0">
+                      <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                      <span>تم التحقق بنجاح</span>
+                    </span>
+                  )}
+                </div>
+
+                {!isBiometricVerifiedForOrder && !biometricFallbackAck && (
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <button
+                      type="button"
+                      disabled={biometricLoading}
+                      onClick={handleBiometricOrderConfirm}
+                      className="min-h-[42px] bg-[#551465] hover:bg-brand-700 disabled:opacity-60 text-white font-extrabold px-4 py-2 rounded-xl text-xs flex items-center gap-2 shadow transition"
+                    >
+                      {biometricLoading ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Fingerprint className="w-4 h-4 text-brand-200" />
+                      )}
+                      <span>
+                        {webAuthnCredentials.length > 0
+                          ? 'تأكيد الشراء ببصمة الإصبع أو الوجه'
+                          : 'تسجيل البصمة وتأكيد الشراء الآن'}
+                      </span>
+                    </button>
+
+                    {(webAuthnSupport && (!webAuthnSupport.supported || (webAuthnSupport.isEmbeddedIframe && biometricError))) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBiometricFallbackAck(true);
+                          setPaymentError('');
+                        }}
+                        className="min-h-[38px] bg-slate-900 hover:bg-slate-800 text-amber-300 border border-amber-500/35 font-bold px-3.5 py-2 rounded-xl text-[11px] transition"
+                      >
+                        المتابعة (المتصفح المضمّن يقيّد مستشعر الجهاز)
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {biometricFallbackAck && !isBiometricVerifiedForOrder && (
+                  <div className="bg-amber-950/50 border border-amber-500/35 text-amber-200 rounded-xl p-2.5 text-[11px] flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span>
+                      تمت المتابعة لعدم توفر صلاحية WebAuthn في بيئة العرض المضمّنة؛ على أندرويد وChrome المباشر يُطلب المسح البيومتري الفعلي.
+                    </span>
+                  </div>
+                )}
+
+                {biometricError && !isBiometricVerifiedForOrder && (
+                  <div className="bg-rose-950/50 border border-rose-500/40 text-rose-300 rounded-xl p-2.5 text-[11px] flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>{biometricError}</span>
+                  </div>
+                )}
+              </div>
+            )}
 
             {paymentError && (
               <div className="bg-rose-950/60 border border-rose-500/40 text-rose-300 rounded-xl p-3 text-xs flex items-center gap-2">
@@ -893,6 +1186,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                   <div className="flex justify-between text-amber-300">
                     <span>خصم نقاط الولاء ({createdOrder.loyaltyPointsRedeemed?.toLocaleString()} نقطة):</span>
                     <span>-{createdOrder.loyaltyDiscount.toLocaleString()} ر.س</span>
+                  </div>
+                ) : null}
+                {createdOrder.giftVoucherDiscount && createdOrder.giftVoucherDiscount > 0 ? (
+                  <div className="flex justify-between text-emerald-400 font-semibold">
+                    <span>خصم قسيمة الهدية ({createdOrder.giftVoucherCode}):</span>
+                    <span>-{createdOrder.giftVoucherDiscount.toLocaleString()} ر.س</span>
                   </div>
                 ) : null}
                 <div className="flex justify-between">

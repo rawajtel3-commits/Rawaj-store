@@ -11,7 +11,7 @@ import {
   Sparkles,
   Coins
 } from 'lucide-react';
-import { CartItem, StoreSettings } from '../types';
+import { CartItem, GiftVoucher, StoreSettings } from '../types';
 import { formatPrice } from '../utils/currency';
 import { LazyImage } from './LazyImage';
 import {
@@ -20,6 +20,10 @@ import {
   discountSarToPoints,
   pointsToDiscountSar,
 } from '../utils/loyalty';
+import {
+  findRedeemableGiftVoucher,
+  normalizeGiftVoucherCode,
+} from '../utils/giftVouchers';
 
 interface CartDrawerProps {
   isOpen: boolean;
@@ -30,11 +34,17 @@ interface CartDrawerProps {
   onProceedToCheckout: (
     promoDiscount: number,
     loyaltyPointsUsed: number,
-    loyaltyDiscountSar: number
+    loyaltyDiscountSar: number,
+    giftVoucherCode: string,
+    giftVoucherDiscountSar: number
   ) => void;
   loyaltyPoints?: number;
   pendingRedeemPoints?: number;
   onSetPendingRedeemPoints?: (points: number) => void;
+  giftVouchers?: GiftVoucher[];
+  appliedGiftVoucherCode?: string;
+  onApplyGiftVoucherCode?: (code: string) => void;
+  onNavigateToGiftVouchers?: () => void;
   settings: StoreSettings;
 }
 
@@ -48,11 +58,17 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   loyaltyPoints = 0,
   pendingRedeemPoints = 0,
   onSetPendingRedeemPoints,
+  giftVouchers = [],
+  appliedGiftVoucherCode = '',
+  onApplyGiftVoucherCode,
+  onNavigateToGiftVouchers,
   settings,
 }) => {
   const [promoCode, setPromoCode] = useState('');
   const [appliedPromo, setAppliedPromo] = useState<{ code: string; percent: number } | null>(null);
   const [promoError, setPromoError] = useState('');
+  const [voucherInput, setVoucherInput] = useState('');
+  const [voucherError, setVoucherError] = useState('');
 
   if (!isOpen) return null;
 
@@ -79,20 +95,36 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     remainingAfterPromo,
     pointsToDiscountSar(activeLoyaltyPoints)
   );
+  const remainingAfterLoyalty = Math.max(0, remainingAfterPromo - loyaltyDiscountAmount);
 
-  const totalDiscountAmount = promoDiscountAmount + loyaltyDiscountAmount;
+  const activeGiftVoucher = appliedGiftVoucherCode
+    ? findRedeemableGiftVoucher(giftVouchers, appliedGiftVoucherCode).voucher
+    : undefined;
+  const giftVoucherDiscountAmount = activeGiftVoucher
+    ? Math.min(remainingAfterLoyalty, activeGiftVoucher.remainingBalanceSar)
+    : 0;
+  const remainingGiftVoucherBalance = activeGiftVoucher
+    ? Math.max(0, activeGiftVoucher.remainingBalanceSar - giftVoucherDiscountAmount)
+    : 0;
+
+  const totalDiscountAmount = promoDiscountAmount + loyaltyDiscountAmount + giftVoucherDiscountAmount;
   const netSubtotal = Math.max(0, subtotal - totalDiscountAmount);
   const vatAmount = Math.round(netSubtotal * (settings.vatPercentage / 100) * 100) / 100;
-  const isFreeShipping = netSubtotal >= settings.freeShippingThreshold || items.length === 0;
+  const isFreeShipping = subtotal >= settings.freeShippingThreshold || items.length === 0;
   const shippingFee = isFreeShipping ? 0 : 25;
   const total = netSubtotal + vatAmount + shippingFee;
   const estimatedEarnedPoints = calculateEarnedPoints(netSubtotal);
 
-  const freeShippingNeeded = Math.max(0, settings.freeShippingThreshold - netSubtotal);
-  const freeShippingProgress = Math.min(100, (netSubtotal / settings.freeShippingThreshold) * 100);
+  const freeShippingNeeded = Math.max(0, settings.freeShippingThreshold - subtotal);
+  const freeShippingProgress = Math.min(100, (subtotal / settings.freeShippingThreshold) * 100);
+
+  const activeAvailableVouchers = giftVouchers.filter(
+    (v) => v.status !== 'redeemed' && v.remainingBalanceSar > 0
+  );
 
   const handleApplyPromo = () => {
     setPromoError('');
+    setVoucherError('');
     const code = promoCode.trim().toUpperCase();
     if (code === 'RAWAJ10' || code === 'HORIZON10') {
       setAppliedPromo({ code, percent: 10 });
@@ -101,7 +133,27 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
       setAppliedPromo({ code: 'WELCOME15', percent: 15 });
       setPromoCode('');
     } else {
+      const voucherCheck = findRedeemableGiftVoucher(giftVouchers, code);
+      if (voucherCheck.voucher && onApplyGiftVoucherCode) {
+        onApplyGiftVoucherCode(voucherCheck.voucher.code);
+        setPromoCode('');
+        return;
+      }
       setPromoError('كود الخصم غير صالح أو منتهي الصلاحية.');
+    }
+  };
+
+  const handleApplyGiftVoucher = (codeOverride?: string) => {
+    setVoucherError('');
+    const candidate = normalizeGiftVoucherCode(codeOverride ?? voucherInput);
+    const result = findRedeemableGiftVoucher(giftVouchers, candidate);
+    if (!result.voucher) {
+      setVoucherError(result.error || 'كود قسيمة الهدية غير صالح.');
+      return;
+    }
+    onApplyGiftVoucherCode?.(result.voucher.code);
+    if (!codeOverride) {
+      setVoucherInput('');
     }
   };
 
@@ -284,6 +336,88 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 )}
               </div>
 
+              {/* Gift Voucher Redemption */}
+              <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-2.5 space-y-2">
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="font-bold text-slate-200 flex items-center gap-1.5">
+                    <Gift className="w-3.5 h-3.5 text-brand-300" />
+                    <span>تطبيق قسيمة هدية رقمية</span>
+                  </span>
+                  {onNavigateToGiftVouchers && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onNavigateToGiftVouchers();
+                      }}
+                      className="text-brand-300 hover:text-white font-bold underline underline-offset-2"
+                    >
+                      إهداء قسيمة لصديق
+                    </button>
+                  )}
+                </div>
+
+                {activeGiftVoucher ? (
+                  <div className="bg-emerald-950/35 border border-emerald-500/35 rounded-lg p-2 flex items-center justify-between gap-2 text-[11px]">
+                    <div className="min-w-0">
+                      <span className="font-mono font-extrabold text-emerald-300 block truncate">
+                        ✓ {activeGiftVoucher.code}
+                      </span>
+                      <span className="text-slate-300 block">
+                        خصم: {formatPrice(giftVoucherDiscountAmount, settings.activeCurrency, settings.yerExchangeRate)}
+                        {' · '}
+                        المتبقي بعد الطلب: {formatPrice(remainingGiftVoucherBalance, settings.activeCurrency, settings.yerExchangeRate)}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onApplyGiftVoucherCode?.('')}
+                      className="px-2 py-1 rounded-md bg-rose-950/60 text-rose-300 border border-rose-500/30 font-bold shrink-0"
+                    >
+                      إزالة
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex gap-1.5">
+                      <input
+                        type="text"
+                        value={voucherInput}
+                        onChange={(e) => setVoucherInput(e.target.value)}
+                        placeholder="أدخل كود قسيمة الهدية (GIFT-...)"
+                        dir="ltr"
+                        className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono uppercase placeholder-slate-500 focus:outline-none focus:border-[#551465] text-right"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleApplyGiftVoucher()}
+                        className="bg-[#551465] hover:bg-brand-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition shrink-0"
+                      >
+                        تطبيق
+                      </button>
+                    </div>
+                    {voucherError && (
+                      <span className="text-[11px] text-rose-400 block">{voucherError}</span>
+                    )}
+                    {activeAvailableVouchers.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                        <span className="text-[10px] text-slate-400">قسائم متاحة:</span>
+                        {activeAvailableVouchers.slice(0, 3).map((v) => (
+                          <button
+                            key={v.id}
+                            type="button"
+                            onClick={() => handleApplyGiftVoucher(v.code)}
+                            className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-md bg-slate-950 hover:bg-slate-800 border border-brand-500/35 text-brand-300 transition"
+                          >
+                            {v.code} ({formatPrice(v.remainingBalanceSar, settings.activeCurrency, settings.yerExchangeRate)})
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+
               {/* Loyalty Points Redemption Toggle */}
               {onSetPendingRedeemPoints && loyaltyPoints >= MIN_REDEEM_POINTS && (
                 <div className="bg-slate-900 border border-slate-800 rounded-xl p-2.5 flex items-center justify-between gap-2 text-xs">
@@ -339,6 +473,13 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   </div>
                 )}
 
+                {giftVoucherDiscountAmount > 0 && activeGiftVoucher && (
+                  <div className="flex justify-between text-emerald-400 font-semibold">
+                    <span>خصم قسيمة الهدية ({activeGiftVoucher.code}):</span>
+                    <span>-{formatPrice(giftVoucherDiscountAmount, settings.activeCurrency, settings.yerExchangeRate)}</span>
+                  </div>
+                )}
+
                 <div className="flex justify-between">
                   <span className="text-slate-400">ضريبة القيمة المضافة ({settings.vatPercentage}%):</span>
                   <span>{formatPrice(vatAmount, settings.activeCurrency, settings.yerExchangeRate)}</span>
@@ -372,7 +513,9 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   onProceedToCheckout(
                     promoDiscountAmount,
                     activeLoyaltyPoints,
-                    loyaltyDiscountAmount
+                    loyaltyDiscountAmount,
+                    activeGiftVoucher?.code || '',
+                    giftVoucherDiscountAmount
                   );
                   onClose();
                 }}

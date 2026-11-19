@@ -31,7 +31,8 @@ import {
   Share2,
   Check,
   Copy,
-  MessageCircle
+  MessageCircle,
+  Heart
 } from 'lucide-react';
 import {
   Product,
@@ -46,10 +47,12 @@ import {
 import { formatPrice } from '../utils/currency';
 import { parseVideoSource, formatVideoTime } from '../utils/video';
 import { calculateEarnedPoints } from '../utils/loyalty';
+import { computeSuggestedTargetPrices } from '../utils/priceAlerts';
 import { ProductARModal, getProductDimensions } from './ProductARModal';
 import { LazyImage } from './LazyImage';
 import { RecommendedProductsSection } from './RecommendedProductsSection';
 import { ProductReviewsPanel } from './ProductReviewsPanel';
+import { InstallmentCalculator } from './InstallmentCalculator';
 
 interface ProductDetailModalProps {
   product: Product | null;
@@ -58,6 +61,8 @@ interface ProductDetailModalProps {
   onAddToCart: (cartItem: CartItem) => void;
   onOpenSellerChatWithProduct: (product: Product) => void;
   onAskAIAboutProduct: (product: Product) => void;
+  isWishlisted?: boolean;
+  onToggleWishlist?: (productId: string) => void;
   isCompared?: boolean;
   onToggleCompare?: (productId: string) => void;
   settings?: StoreSettings;
@@ -82,6 +87,8 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   onAddToCart,
   onOpenSellerChatWithProduct,
   onAskAIAboutProduct,
+  isWishlisted = false,
+  onToggleWishlist,
   isCompared = false,
   onToggleCompare,
   settings,
@@ -106,6 +113,8 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
       onAddToCart={onAddToCart}
       onOpenSellerChatWithProduct={onOpenSellerChatWithProduct}
       onAskAIAboutProduct={onAskAIAboutProduct}
+      isWishlisted={isWishlisted}
+      onToggleWishlist={onToggleWishlist}
       isCompared={isCompared}
       onToggleCompare={onToggleCompare}
       settings={settings}
@@ -129,6 +138,8 @@ interface ProductDetailContentProps {
   onAddToCart: (cartItem: CartItem) => void;
   onOpenSellerChatWithProduct: (product: Product) => void;
   onAskAIAboutProduct: (product: Product) => void;
+  isWishlisted: boolean;
+  onToggleWishlist?: (productId: string) => void;
   isCompared: boolean;
   onToggleCompare?: (productId: string) => void;
   settings?: StoreSettings;
@@ -155,6 +166,8 @@ const ProductDetailContent: React.FC<ProductDetailContentProps> = ({
   onAddToCart,
   onOpenSellerChatWithProduct,
   onAskAIAboutProduct,
+  isWishlisted,
+  onToggleWishlist,
   isCompared,
   onToggleCompare,
   settings,
@@ -228,10 +241,14 @@ const ProductDetailContent: React.FC<ProductDetailContentProps> = ({
     }
   }, [mediaMode]);
 
-  // Scroll modal back to top when switching products
+  // Scroll modal back to top & reset target price input when switching products
   useEffect(() => {
     modalBodyRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [product.id]);
+    setShowTargetPriceForm(false);
+    setCustomTargetPrice(
+      String(priceAlert?.targetPrice || Math.max(1, Math.round(product.price * 0.9)))
+    );
+  }, [product.id, product.price, priceAlert?.targetPrice]);
 
   // Close on Escape (only when AR modal and review lightbox are not open)
   useEffect(() => {
@@ -604,7 +621,7 @@ const ProductDetailContent: React.FC<ProductDetailContentProps> = ({
                   className="rawaj-dark-surface absolute bottom-3 right-3 bg-slate-950/85 hover:bg-[#551465] text-white text-xs font-bold px-3.5 py-2 rounded-xl border border-slate-700/80 hover:border-brand-400/50 backdrop-blur flex items-center gap-2 shadow-lg transition"
                 >
                   <Box className="w-3.5 h-3.5 text-brand-300" />
-                  <span>عرض في غرفتك</span>
+                  <span>تجربة AR بالكاميرا</span>
                 </button>
 
                 {hasVideo && (
@@ -915,7 +932,7 @@ const ProductDetailContent: React.FC<ProductDetailContentProps> = ({
               >
                 <span className="flex items-center gap-2">
                   <Box className="w-4 h-4 text-brand-300" />
-                  <span>عرض في غرفتك (AR Simulation)</span>
+                  <span>تجربة AR في غرفتك بالكاميرا (3D)</span>
                 </span>
                 <span className="text-[11px] font-mono tabular-nums text-brand-300">
                   {dims.widthCm} × {dims.heightCm} × {dims.depthCm} سم
@@ -975,6 +992,22 @@ const ProductDetailContent: React.FC<ProductDetailContentProps> = ({
                     : 'مشاركة المنتج'}
                 </span>
               </button>
+
+              {onToggleWishlist && (
+                <button
+                  type="button"
+                  onClick={() => onToggleWishlist(product.id)}
+                  aria-pressed={isWishlisted}
+                  className={`col-span-2 p-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 border transition ${
+                    isWishlisted
+                      ? 'bg-rose-600 text-white border-rose-400/60 shadow'
+                      : 'bg-slate-950 hover:bg-rose-950/35 text-slate-200 border-slate-800 hover:border-rose-500/40'
+                  }`}
+                >
+                  <Heart className={`w-4 h-4 shrink-0 ${isWishlisted ? 'fill-white' : 'text-rose-400'}`} />
+                  <span>{isWishlisted ? 'محفوظ في المفضلة (اضغط للإزالة)' : 'إضافة للمفضلة'}</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -1050,6 +1083,9 @@ const ProductDetailContent: React.FC<ProductDetailContentProps> = ({
                 </div>
               </div>
 
+              {/* Installment Calculator (3, 6, 12 months) */}
+              <InstallmentCalculator totalPrice={totalPrice} settings={settings} />
+
               {/* Price Drop Alert Toggle & Target Config */}
               {onTogglePriceAlert && (
                 <div
@@ -1077,13 +1113,13 @@ const ProductDetailContent: React.FC<ProductDetailContentProps> = ({
                       <div className="min-w-0">
                         <span className="text-xs font-extrabold text-white block">
                           {priceAlert?.isActive
-                            ? 'تنبيه انخفاض السعر مفعّل'
-                            : 'تنبيه انخفاض السعر'}
+                            ? 'التنبيه التلقائي للسعر مفعّل'
+                            : 'التنبيه التلقائي لانخفاض السعر'}
                         </span>
                         <span className="text-[11px] text-slate-400 block leading-snug tabular-nums">
                           {priceAlert?.isActive
                             ? priceAlert.targetPrice
-                              ? `سيصلك إشعار فوري إذا انخفض السعر إلى ${formatPrice(
+                              ? `سيصلك إشعار فوري عند انخفاض السعر إلى ${formatPrice(
                                   priceAlert.targetPrice,
                                   settings?.activeCurrency,
                                   settings?.yerExchangeRate
@@ -1093,8 +1129,18 @@ const ProductDetailContent: React.FC<ProductDetailContentProps> = ({
                                   settings?.activeCurrency,
                                   settings?.yerExchangeRate
                                 )}`
-                            : 'احصل على إشعار فوري داخل المتجر فور تخفيض سعر هذا المنتج'}
+                            : 'حدّد السعر المستهدف ليصلك إشعار فوري داخل التطبيق فور تحققه'}
                         </span>
+                        {priceAlert?.triggeredAt && (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-emerald-300 font-bold mt-0.5 tabular-nums">
+                            ✓ تم تفعيل الإشعار عند{' '}
+                            {formatPrice(
+                              priceAlert.lastTriggeredPrice || product.price,
+                              settings?.activeCurrency,
+                              settings?.yerExchangeRate
+                            )}
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -1117,7 +1163,7 @@ const ProductDetailContent: React.FC<ProductDetailContentProps> = ({
                             className="px-3.5 py-2 rounded-xl bg-[#551465] hover:bg-brand-700 text-white text-xs font-extrabold flex items-center gap-1.5 transition whitespace-nowrap shadow"
                           >
                             <Bell className="w-3.5 h-3.5" />
-                            <span>تفعيل التنبيه</span>
+                            <span>تفعيل تلقائي</span>
                           </button>
                         </>
                       ) : (
@@ -1155,32 +1201,53 @@ const ProductDetailContent: React.FC<ProductDetailContentProps> = ({
                         e.preventDefault();
                         const numeric = Number(customTargetPrice);
                         if (Number.isFinite(numeric) && numeric > 0 && numeric < product.price) {
-                          onTogglePriceAlert(product, numeric);
+                          onTogglePriceAlert(product, Math.round(numeric * 100) / 100);
                           setShowTargetPriceForm(false);
                         }
                       }}
-                      className="mt-3 pt-3 border-t border-slate-800/80 flex flex-wrap items-center gap-2 text-xs"
+                      className="mt-3 pt-3 border-t border-slate-800/80 space-y-2.5 text-xs"
                     >
-                      <TrendingDown className="w-4 h-4 text-emerald-400 shrink-0" />
-                      <label htmlFor="target-price-input" className="text-[11px] text-slate-300 font-bold">
-                        نبهني عندما يصل السعر (بالريال السعودي) إلى:
-                      </label>
-                      <input
-                        id="target-price-input"
-                        type="number"
-                        min={1}
-                        max={Math.max(1, product.price - 1)}
-                        value={customTargetPrice}
-                        onChange={(e) => setCustomTargetPrice(e.target.value)}
-                        className="w-28 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-bold tabular-nums focus:outline-none focus:border-emerald-500"
-                      />
-                      <button
-                        type="submit"
-                        disabled={!Number(customTargetPrice) || Number(customTargetPrice) >= product.price}
-                        className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-bold text-[11px] transition"
-                      >
-                        حفظ الهدف وتفعيل
-                      </button>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[11px] text-slate-400 font-bold">اقتراحات سريعة:</span>
+                        {computeSuggestedTargetPrices(product.price).map((preset) => (
+                          <button
+                            key={preset.discountPercent}
+                            type="button"
+                            onClick={() => setCustomTargetPrice(String(preset.targetPrice))}
+                            className={`px-2 py-1 rounded-lg border text-[10px] font-bold tabular-nums transition ${
+                              Number(customTargetPrice) === preset.targetPrice
+                                ? 'bg-emerald-600/25 border-emerald-400 text-emerald-300'
+                                : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-500'
+                            }`}
+                          >
+                            -{preset.discountPercent}% ({preset.targetPrice.toLocaleString()} ر.س)
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <TrendingDown className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <label htmlFor="target-price-input" className="text-[11px] text-slate-300 font-bold">
+                          نبهني عندما يصل السعر (بالريال السعودي) إلى:
+                        </label>
+                        <input
+                          id="target-price-input"
+                          type="number"
+                          min={1}
+                          max={Math.max(1, product.price - 1)}
+                          step="any"
+                          value={customTargetPrice}
+                          onChange={(e) => setCustomTargetPrice(e.target.value)}
+                          className="w-28 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-bold tabular-nums focus:outline-none focus:border-emerald-500"
+                        />
+                        <button
+                          type="submit"
+                          disabled={!Number(customTargetPrice) || Number(customTargetPrice) >= product.price}
+                          className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-bold text-[11px] transition"
+                        >
+                          حفظ الهدف وتفعيل
+                        </button>
+                      </div>
                     </form>
                   )}
                 </div>
@@ -1449,8 +1516,22 @@ const ProductDetailContent: React.FC<ProductDetailContentProps> = ({
       <ProductARModal
         isOpen={isARModalOpen}
         product={product}
+        allProducts={allProducts}
+        initialVariant={selectedVariant}
         onClose={() => setIsARModalOpen(false)}
-        onAddToCart={() => handleAddToCart()}
+        onAddToCart={(arProd, arVar) => {
+          if (arProd.id === product.id && (!arVar || arVar.id === selectedVariant?.id)) {
+            handleAddToCart();
+          } else {
+            onAddToCart({
+              product: arProd,
+              selectedVariant: arVar,
+              quantity: 1,
+            });
+            onClose();
+          }
+          setIsARModalOpen(false);
+        }}
         settings={settings}
       />
     </div>
